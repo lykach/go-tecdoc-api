@@ -1,0 +1,16 @@
+[Unit]
+Description=Go TecDoc API Service
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/go-tecdoc-api
+ExecStart=/var/www/go-tecdoc-api/bin/server
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/go-tecdoc-api/access.log
+StandardError=append:/var/log/go-tecdoc-api/error.log
+
+[Install]
+WantedBy=multi-user.target
