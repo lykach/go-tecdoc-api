@@ -61,6 +61,7 @@ FuelType    string   `json:"fuel_type"`
 BodyType    string   `json:"body_type"`
 EngineType  string   `json:"engine_type"`
 EngineCodes []string `json:"engine_codes"`
+Engines     []Engine `json:"engines"`
 }
 
 type VehicleDetail struct {
