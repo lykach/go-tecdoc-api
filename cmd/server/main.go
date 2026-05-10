@@ -13,6 +13,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/rs/cors"
 
+	"go-tecdoc-api/internal/auth"
 	"go-tecdoc-api/internal/database"
 	"go-tecdoc-api/internal/handlers"
 )
@@ -62,16 +63,17 @@ func main() {
 
 	// API v1 routes
 	api := router.PathPrefix("/api/v1").Subrouter()
-	
-    // Localization routes
-    api.HandleFunc("/languages", h.GetLanguages).Methods("GET")
-    api.HandleFunc("/languages/{id}", h.GetLanguageByID).Methods("GET")
-    api.HandleFunc("/countries", h.GetCountries).Methods("GET")
-    api.HandleFunc("/countries/{id}", h.GetCountryByID).Methods("GET")
-	
+	api.Use(auth.NewAPIKeyMiddleware(queries).Middleware)
+
+	// Localization routes
+	api.HandleFunc("/languages", h.GetLanguages).Methods("GET")
+	api.HandleFunc("/languages/{id}", h.GetLanguageByID).Methods("GET")
+	api.HandleFunc("/countries", h.GetCountries).Methods("GET")
+	api.HandleFunc("/countries/{id}", h.GetCountryByID).Methods("GET")
+
 	// Suppliers routes
-    api.HandleFunc("/suppliers", h.GetSuppliers).Methods("GET")
-    api.HandleFunc("/suppliers/{id}", h.GetSupplierByID).Methods("GET")
+	api.HandleFunc("/suppliers", h.GetSuppliers).Methods("GET")
+	api.HandleFunc("/suppliers/{id}", h.GetSupplierByID).Methods("GET")
 	api.HandleFunc("/suppliers/{id}/products", h.GetSupplierProducts).Methods("GET")
 
 	// Manufacturers routes
@@ -81,23 +83,23 @@ func main() {
 	// Model series routes
 	api.HandleFunc("/manufacturers/{id}/models", h.GetModelSeries).Methods("GET")
 	api.HandleFunc("/models/{id}", h.GetModelSeriesDetails).Methods("GET")
-	
+
 	// Commercial Vehicles
-    api.HandleFunc("/models/{id}/cv", h.GetCommercialVehicles).Methods("GET")
+	api.HandleFunc("/models/{id}/cv", h.GetCommercialVehicles).Methods("GET")
 	api.HandleFunc("/cv/{id}", h.GetCommercialVehicleDetails).Methods("GET")
-	
+
 	// Motorcycles
-    api.HandleFunc("/models/{id}/mc", h.GetMotorcycles).Methods("GET")
+	api.HandleFunc("/models/{id}/mc", h.GetMotorcycles).Methods("GET")
 	api.HandleFunc("/mc/{id}", h.GetMotorcycleDetails).Methods("GET")
 
 	// Passenger cars routes
 	api.HandleFunc("/models/{id}/cars", h.GetPassengerCars).Methods("GET")
 	api.HandleFunc("/cars/{id}", h.GetCarDetails).Methods("GET")
 	api.HandleFunc("/cars/{id}/product-groups", h.GetCarProductGroups).Methods("GET")
-	
+
 	// Engine details
-    api.HandleFunc("/engines/{id}", h.GetEngineDetails).Methods("GET")
-	
+	api.HandleFunc("/engines/{id}", h.GetEngineDetails).Methods("GET")
+
 	// Articles routes
 	api.HandleFunc("/articles/search", h.SearchArticles).Methods("GET")
 	api.HandleFunc("/articles/{id}", h.GetArticleDetails).Methods("GET")
@@ -118,12 +120,11 @@ func main() {
 	// Search routes
 	api.HandleFunc("/search/kba", h.SearchByKBA).Methods("GET")
 	api.HandleFunc("/search/article", h.SearchArticleByNumber).Methods("GET")
-    api.HandleFunc("/search/article", h.SearchArticles).Methods("GET")
-    api.HandleFunc("/search/oem", h.SearchByOEM).Methods("GET")
+	api.HandleFunc("/search/article", h.SearchArticles).Methods("GET")
+	api.HandleFunc("/search/oem", h.SearchByOEM).Methods("GET")
 	api.HandleFunc("/search/analog", h.SearchAnalogs).Methods("GET")
 	api.HandleFunc("/search/oem-oem", h.SearchOEMByOEM).Methods("GET")
-	
-	
+
 	// Health check
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -135,7 +136,7 @@ func main() {
 	corsHandler := cors.New(cors.Options{
 		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Content-Type", "Authorization"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization", "X-API-Key"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	})
@@ -158,12 +159,12 @@ func main() {
 	log.Printf("💚 Health check: http://%s/health", address)
 	log.Println("\n📋 Available endpoints:")
 	log.Println("   GET /api/v1/languages")
-    log.Println("   GET /api/v1/languages/{id}")
-    log.Println("   GET /api/v1/countries")
-    log.Println("   GET /api/v1/countries/{id}")
+	log.Println("   GET /api/v1/languages/{id}")
+	log.Println("   GET /api/v1/countries")
+	log.Println("   GET /api/v1/countries/{id}")
 	log.Println("   GET /api/v1/suppliers")
-    log.Println("   GET /api/v1/suppliers/{id}")
-    log.Println("   GET /api/v1/suppliers?brand=BOSCH")
+	log.Println("   GET /api/v1/suppliers/{id}")
+	log.Println("   GET /api/v1/suppliers?brand=BOSCH")
 	log.Println("   GET /api/v1/suppliers/{id}/products")
 	log.Println("   GET /api/v1/manufacturers")
 	log.Println("   GET /api/v1/manufacturers/{id}")
