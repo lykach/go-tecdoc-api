@@ -1,12 +1,13 @@
 package handlers
 
 import (
-	"net/http"
+	"context"
 	"go-tecdoc-api/internal/models"
+	"net/http"
 )
 
 // SearchArticles - пошук запчастин за номером
-// GET /api/v1/articles/search?number=0001108466&limit=20&offset=0&language_id=48&country_id=62
+// GET /api/v1/articles/search?number=0001108466&limit=200&offset=0&language_id=48&country_id=62
 func (h *Handler) SearchArticles(w http.ResponseWriter, r *http.Request) {
 	searchNumber := getStringParam(r, "number", "")
 	if searchNumber == "" {
@@ -14,20 +15,15 @@ func (h *Handler) SearchArticles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := getIntParam(r, "limit", 50)
+	limit := clampSearchLimit(getIntParam(r, "limit", defaultSearchLimit))
 	offset := getIntParam(r, "offset", 0)
 	languageID := h.getLanguageID(r)
 	countryID := h.getCountryID(r)
 
-	// Валідація
-	if limit > 500 {
-		limit = 500
-	}
-	if limit < 1 {
-		limit = 50
-	}
+	ctx, cancel := context.WithTimeout(r.Context(), searchQueryTimeout)
+	defer cancel()
 
-	results, err := h.queries.SearchArticlesByNumber(searchNumber, languageID, countryID, limit, offset)
+	results, err := h.queries.SearchArticlesByNumber(ctx, searchNumber, languageID, countryID, limit, offset)
 	if err != nil {
 		h.respondError(w, http.StatusInternalServerError, "Failed to search articles: "+err.Error())
 		return
@@ -83,8 +79,22 @@ func (h *Handler) GetArticleCrossReferences(w http.ResponseWriter, r *http.Reque
 	}
 
 	languageID := h.getLanguageID(r)
+	countryID := h.getCountryID(r)
 
-	crosses, err := h.queries.GetArticleCrossReferences(artID, languageID)
+	ctx, cancel := context.WithTimeout(r.Context(), searchQueryTimeout)
+	defer cancel()
+
+	exists, err := h.queries.ArticleExistsForCountry(ctx, artID, countryID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to validate article: "+err.Error())
+		return
+	}
+	if !exists {
+		h.respondError(w, http.StatusNotFound, "Article not found in the requested country context")
+		return
+	}
+
+	crosses, err := h.queries.GetArticleCrossReferences(ctx, artID, languageID, countryID)
 	if err != nil {
 		h.respondError(w, http.StatusInternalServerError, "Failed to fetch cross references: "+err.Error())
 		return
@@ -96,176 +106,177 @@ func (h *Handler) GetArticleCrossReferences(w http.ResponseWriter, r *http.Reque
 
 	h.respondJSON(w, http.StatusOK, response)
 }
+
 // GetArticleApplicability повертає список автомобілів для запчастини
 func (h *Handler) GetArticleApplicability(w http.ResponseWriter, r *http.Request) {
-id, err := getPathInt(r, "id")
-if err != nil {
-h.respondError(w, http.StatusBadRequest, "Invalid article ID")
-return
-}
+	id, err := getPathInt(r, "id")
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, "Invalid article ID")
+		return
+	}
 
-langID := h.getLanguageID(r)
-countryID := h.getCountryID(r)
+	langID := h.getLanguageID(r)
+	countryID := h.getCountryID(r)
 
-applicabilities, err := h.queries.GetArticleApplicability(id, langID, countryID)
-if err != nil {
-h.respondError(w, http.StatusInternalServerError, "Failed to fetch applicability")
-return
-}
+	applicabilities, err := h.queries.GetArticleApplicability(id, langID, countryID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to fetch applicability")
+		return
+	}
 
-h.respondJSON(w, http.StatusOK, map[string]interface{}{
-"vehicles": applicabilities,
-"total":    len(applicabilities),
-})
+	h.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"vehicles": applicabilities,
+		"total":    len(applicabilities),
+	})
 }
 
 // GetArticleMedia повертає медіа-файли запчастини (зображення, PDF, відео)
 func (h *Handler) GetArticleMedia(w http.ResponseWriter, r *http.Request) {
-id, err := getPathInt(r, "id")
-if err != nil {
-h.respondError(w, http.StatusBadRequest, "Invalid article ID")
-return
-}
+	id, err := getPathInt(r, "id")
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, "Invalid article ID")
+		return
+	}
 
-langID := h.getLanguageID(r)
+	langID := h.getLanguageID(r)
 
-mediaList, err := h.queries.GetArticleMedia(id, langID)
-if err != nil {
-h.respondError(w, http.StatusInternalServerError, "Failed to fetch media")
-return
-}
+	mediaList, err := h.queries.GetArticleMedia(id, langID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to fetch media")
+		return
+	}
 
-// Розділяємо на зображення та документи
-var images []models.ArticleMedia
-var documents []models.ArticleMedia
-var videos []models.ArticleMedia
+	// Розділяємо на зображення та документи
+	var images []models.ArticleMedia
+	var documents []models.ArticleMedia
+	var videos []models.ArticleMedia
 
-for _, media := range mediaList {
-switch media.Type {
-case "JPEG", "PNG", "GIF", "BMP", "TIFF":
-images = append(images, media)
-case "PDF":
-documents = append(documents, media)
-case "URL":
-videos = append(videos, media)
-default:
-// Невідомий тип - додаємо до зображень
-images = append(images, media)
-}
-}
+	for _, media := range mediaList {
+		switch media.Type {
+		case "JPEG", "PNG", "GIF", "BMP", "TIFF":
+			images = append(images, media)
+		case "PDF":
+			documents = append(documents, media)
+		case "URL":
+			videos = append(videos, media)
+		default:
+			// Невідомий тип - додаємо до зображень
+			images = append(images, media)
+		}
+	}
 
-h.respondJSON(w, http.StatusOK, map[string]interface{}{
-"images":    images,
-"documents": documents,
-"videos":    videos,
-"total":     len(mediaList),
-})
+	h.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"images":    images,
+		"documents": documents,
+		"videos":    videos,
+		"total":     len(mediaList),
+	})
 }
 
 // GetArticleComponents повертає список компонентів запчастини
 func (h *Handler) GetArticleComponents(w http.ResponseWriter, r *http.Request) {
-id, err := getPathInt(r, "id")
-if err != nil {
-h.respondError(w, http.StatusBadRequest, "Invalid article ID")
-return
-}
+	id, err := getPathInt(r, "id")
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, "Invalid article ID")
+		return
+	}
 
-langID := h.getLanguageID(r)
-countryID := h.getCountryID(r)
+	langID := h.getLanguageID(r)
+	countryID := h.getCountryID(r)
 
-components, err := h.queries.GetArticleComponents(id, langID, countryID)
-if err != nil {
-h.respondError(w, http.StatusInternalServerError, "Failed to fetch components")
-return
-}
+	components, err := h.queries.GetArticleComponents(id, langID, countryID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to fetch components")
+		return
+	}
 
-h.respondJSON(w, http.StatusOK, map[string]interface{}{
-"components": components,
-"total":      len(components),
-})
+	h.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"components": components,
+		"total":      len(components),
+	})
 }
 
 // GetArticleAccessories повертає список аксесуарів запчастини
 func (h *Handler) GetArticleAccessories(w http.ResponseWriter, r *http.Request) {
-id, err := getPathInt(r, "id")
-if err != nil {
-h.respondError(w, http.StatusBadRequest, "Invalid article ID")
-return
-}
+	id, err := getPathInt(r, "id")
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, "Invalid article ID")
+		return
+	}
 
-langID := h.getLanguageID(r)
-countryID := h.getCountryID(r)
+	langID := h.getLanguageID(r)
+	countryID := h.getCountryID(r)
 
-accessories, err := h.queries.GetArticleAccessories(id, langID, countryID)
-if err != nil {
-h.respondError(w, http.StatusInternalServerError, "Failed to fetch accessories")
-return
-}
+	accessories, err := h.queries.GetArticleAccessories(id, langID, countryID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to fetch accessories")
+		return
+	}
 
-h.respondJSON(w, http.StatusOK, map[string]interface{}{
-"accessories": accessories,
-"total":       len(accessories),
-})
+	h.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"accessories": accessories,
+		"total":       len(accessories),
+	})
 }
 
 // GetArticleOEMNumbers повертає список OEM номерів запчастини
 func (h *Handler) GetArticleOEMNumbers(w http.ResponseWriter, r *http.Request) {
-id, err := getPathInt(r, "id")
-if err != nil {
-h.respondError(w, http.StatusBadRequest, "Invalid article ID")
-return
-}
+	id, err := getPathInt(r, "id")
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, "Invalid article ID")
+		return
+	}
 
-oemNumbers, err := h.queries.GetArticleOEMNumbers(id)
-if err != nil {
-h.respondError(w, http.StatusInternalServerError, "Failed to fetch OEM numbers")
-return
-}
+	oemNumbers, err := h.queries.GetArticleOEMNumbers(id)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to fetch OEM numbers")
+		return
+	}
 
-h.respondJSON(w, http.StatusOK, models.OEMNumbersResponse{
-OEMNumbers: oemNumbers,
-Total:      len(oemNumbers),
-})
+	h.respondJSON(w, http.StatusOK, models.OEMNumbersResponse{
+		OEMNumbers: oemNumbers,
+		Total:      len(oemNumbers),
+	})
 }
 
 // GetArticleCoordinates повертає координати запчастини на зображенні
 func (h *Handler) GetArticleCoordinates(w http.ResponseWriter, r *http.Request) {
-articleID, err := getPathInt(r, "id")
-if err != nil {
-h.respondError(w, http.StatusBadRequest, "Invalid article ID")
-return
-}
+	articleID, err := getPathInt(r, "id")
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, "Invalid article ID")
+		return
+	}
 
-coordinates, err := h.queries.GetArticleCoordinates(articleID)
-if err != nil {
-h.respondError(w, http.StatusInternalServerError, "Failed to fetch coordinates")
-return
-}
+	coordinates, err := h.queries.GetArticleCoordinates(articleID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to fetch coordinates")
+		return
+	}
 
-h.respondJSON(w, http.StatusOK, models.ArticleCoordinatesResponse{
-Coordinates: coordinates,
-Total:       len(coordinates),
-})
+	h.respondJSON(w, http.StatusOK, models.ArticleCoordinatesResponse{
+		Coordinates: coordinates,
+		Total:       len(coordinates),
+	})
 }
 
 // GetArticleCriteria повертає критерії (характеристики) запчастини
 func (h *Handler) GetArticleCriteria(w http.ResponseWriter, r *http.Request) {
-articleID, err := getPathInt(r, "id")
-if err != nil {
-h.respondError(w, http.StatusBadRequest, "Invalid article ID")
-return
-}
+	articleID, err := getPathInt(r, "id")
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, "Invalid article ID")
+		return
+	}
 
-languageID := h.getLanguageID(r)
+	languageID := h.getLanguageID(r)
 
-criteria, err := h.queries.GetArticleCriteria(articleID, languageID)
-if err != nil {
-h.respondError(w, http.StatusInternalServerError, "Failed to fetch article criteria")
-return
-}
+	criteria, err := h.queries.GetArticleCriteria(articleID, languageID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to fetch article criteria")
+		return
+	}
 
-h.respondJSON(w, http.StatusOK, models.ArticleCriteriaResponse{
-Criteria: criteria,
-Total:    len(criteria),
-})
+	h.respondJSON(w, http.StatusOK, models.ArticleCriteriaResponse{
+		Criteria: criteria,
+		Total:    len(criteria),
+	})
 }

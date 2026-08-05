@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -60,6 +64,7 @@ func main() {
 
 	// Setup router
 	router := mux.NewRouter()
+	router.Use(recoverMiddleware)
 
 	// API v1 routes
 	api := router.PathPrefix("/api/v1").Subrouter()
@@ -120,24 +125,55 @@ func main() {
 	// Search routes
 	api.HandleFunc("/search/kba", h.SearchByKBA).Methods("GET")
 	api.HandleFunc("/search/article", h.SearchArticleByNumber).Methods("GET")
-	api.HandleFunc("/search/article", h.SearchArticles).Methods("GET")
+	api.HandleFunc("/search/article-exact", h.SearchExactArticleByNumber).Methods("GET")
+	// NOTE: this used to also register h.SearchArticles on the same path+method
+	// as the line above. gorilla/mux matches exact routes in registration
+	// order, so the second registration was silently unreachable dead code -
+	// removed. h.SearchArticles is still live on its own path, /articles/search.
 	api.HandleFunc("/search/oem", h.SearchByOEM).Methods("GET")
 	api.HandleFunc("/search/analog", h.SearchAnalogs).Methods("GET")
 	api.HandleFunc("/search/oem-oem", h.SearchOEMByOEM).Methods("GET")
 
-	// Health check
+	// Health check - actually pings the database instead of assuming it is
+	// still reachable, so orchestrators (k8s/Docker) can detect a dead DB
+	// connection and restart/stop routing traffic to this instance.
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
 		w.Header().Set("Content-Type", "application/json")
+		if err := db.PingContext(ctx); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintf(w, `{"status":"error","database":"unreachable"}`)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, `{"status":"ok","database":"connected"}`)
 	}).Methods("GET")
 
-	// Setup CORS
+	// CORS. Wildcard origins combined with AllowCredentials is both invalid
+	// per the fetch/CORS spec and unsafe (browsers will either reject it or,
+	// depending on the library, effectively echo back "*" as an allowed
+	// origin for credentialed requests). This API is authenticated via the
+	// X-API-Key header rather than cookies, so credentials are not required;
+	// ALLOWED_ORIGINS lets deployments restrict origins explicitly when the
+	// storefront/admin call this API directly from the browser.
+	allowedOrigins := []string{"*"}
+	allowCredentials := false
+	if raw := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS")); raw != "" {
+		allowedOrigins = nil
+		for _, origin := range strings.Split(raw, ",") {
+			origin = strings.TrimSpace(origin)
+			if origin != "" {
+				allowedOrigins = append(allowedOrigins, origin)
+			}
+		}
+		allowCredentials = true
+	}
 	corsHandler := cors.New(cors.Options{
-		AllowedOrigins:   []string{"*"},
+		AllowedOrigins:   allowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type", "Authorization", "X-API-Key"},
-		AllowCredentials: true,
+		AllowCredentials: allowCredentials,
 		MaxAge:           300,
 	})
 
@@ -153,7 +189,20 @@ func main() {
 
 	address := fmt.Sprintf("%s:%s", serverHost, serverPort)
 
-	// Start server
+	// A bare http.ListenAndServe has no read/write/idle timeouts, so a slow
+	// or malicious client can hold a connection (and, transitively, a slot
+	// in the DB pool once a handler starts a query) open indefinitely.
+	// searchQueryTimeout bounds the slowest legitimate handler, so the HTTP
+	// timeouts are set with headroom above it.
+	server := &http.Server{
+		Addr:              address,
+		Handler:           corsHandler.Handler(router),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       90 * time.Second,
+	}
+
 	log.Printf("🚀 Server starting on http://%s", address)
 	log.Printf("📚 API documentation: http://%s/api/v1", address)
 	log.Printf("💚 Health check: http://%s/health", address)
@@ -196,7 +245,49 @@ func main() {
 	log.Println("   GET /api/v1/product-groups/{id}/children")
 	log.Println("   GET /api/v1/product-groups/{id}/articles?car_id=...")
 
-	if err := http.ListenAndServe(address, corsHandler.Handler(router)); err != nil {
-		log.Fatal("Server failed to start:", err)
+	// Run the server in the background and shut it down gracefully on
+	// SIGINT/SIGTERM so in-flight requests finish instead of being dropped
+	// mid-response on every deploy/restart.
+	serverErrors := make(chan error, 1)
+	go func() {
+		serverErrors <- server.ListenAndServe()
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	select {
+	case err := <-serverErrors:
+		if err != nil && err != http.ErrServerClosed {
+			log.Fatal("Server failed to start:", err)
+		}
+	case sig := <-stop:
+		log.Printf("Received %s, shutting down gracefully...", sig)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil {
+			log.Printf("Graceful shutdown failed, forcing close: %v", err)
+			_ = server.Close()
+		}
+		log.Println("Server stopped")
 	}
+}
+
+// recoverMiddleware converts a panic in any handler into a 500 response
+// instead of crashing the whole process and dropping every other in-flight
+// request. Handlers here do a lot of manual SQL scanning; a single bad
+// assumption (unexpected NULL, index-out-of-range) should not take the API
+// down for every other API key.
+func recoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("panic recovered: %v", rec)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprint(w, `{"error":"internal_error","message":"Unexpected server error"}`)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }

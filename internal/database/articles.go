@@ -1,93 +1,105 @@
 package database
 
 import (
+	"context"
 	"database/sql"
-	"strings"
 	"go-tecdoc-api/internal/models"
+	"strings"
 )
 
-// SearchArticlesByNumber - пошук запчастин за номером
-func (q *Queries) SearchArticlesByNumber(searchNumber string, languageID int, countryID int, limit, offset int) ([]models.SearchResult, error) {
-	// Normalize search number (remove spaces, dashes, dots)
-	normalizedNumber := strings.ReplaceAll(searchNumber, " ", "")
-	normalizedNumber = strings.ReplaceAll(normalizedNumber, "-", "")
-	normalizedNumber = strings.ReplaceAll(normalizedNumber, ".", "")
-	normalizedNumber = strings.ToUpper(normalizedNumber)
+// SearchArticlesByNumber searches every TecDoc lookup type for a number.
+// This broad endpoint is useful for diagnostics, EAN lookups and legacy
+// clients, but it must not be used to choose the source article for an analog
+// chain because an OE/IAM number can point at another manufacturer's article.
+func (q *Queries) SearchArticlesByNumber(ctx context.Context, searchNumber string, languageID int, countryID int, limit, offset int) ([]models.SearchResult, error) {
+	return q.searchArticlesByNumber(ctx, searchNumber, languageID, countryID, limit, offset, false)
+}
+
+// SearchExactArticlesByNumber returns only articles whose own TecDoc
+// ArticleNumber equals the requested number. This is the safe discovery step
+// for resolving a concrete manufacturer+article source before cross-reference
+// lookup.
+func (q *Queries) SearchExactArticlesByNumber(ctx context.Context, searchNumber string, languageID int, countryID int, limit, offset int) ([]models.SearchResult, error) {
+	return q.searchArticlesByNumber(ctx, searchNumber, languageID, countryID, limit, offset, true)
+}
+
+func (q *Queries) searchArticlesByNumber(ctx context.Context, searchNumber string, languageID int, countryID int, limit, offset int, exactArticleOnly bool) ([]models.SearchResult, error) {
+	normalizedNumber := normalizeSearchNumber(searchNumber)
+	lookupTypeFilter := ""
+	if exactArticleOnly {
+		lookupTypeFilter = " AND ART_LOOKUP.ARL_TYPE = 'ArticleNumber'"
+	}
 
 	query := `
-		SELECT  
-			ARTICLES.ART_ID, 
+		SELECT DISTINCT
+			ARTICLES.ART_ID,
 			ARTICLES.ART_ARTICLE_NR,
 			ARTICLES.ART_SUP_BRAND,
-			CONCAT_WS(' ', 
+			ARTICLES.ART_SUP_ID,
+			CONCAT_WS(' ',
 				COALESCE(
-					(SELECT DES_TEXTS.TEX_TEXT 
-					 FROM TEXT_DESIGNATIONS 
+					(SELECT DES_TEXTS.TEX_TEXT
+					 FROM TEXT_DESIGNATIONS
 					 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
-					 WHERE TEXT_DESIGNATIONS.DES_ID = ARTICLES.ART_COMPLETE_DES_ID 
+					 WHERE TEXT_DESIGNATIONS.DES_ID = ARTICLES.ART_COMPLETE_DES_ID
 					 AND TEXT_DESIGNATIONS.DES_LNG_ID = ?
 					 GROUP BY TEXT_DESIGNATIONS.DES_ID LIMIT 1),
-					(SELECT DES_TEXTS.TEX_TEXT 
-					 FROM TEXT_DESIGNATIONS 
+					(SELECT DES_TEXTS.TEX_TEXT
+					 FROM TEXT_DESIGNATIONS
 					 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
-					 WHERE TEXT_DESIGNATIONS.DES_ID = ARTICLES.ART_COMPLETE_DES_ID 
+					 WHERE TEXT_DESIGNATIONS.DES_ID = ARTICLES.ART_COMPLETE_DES_ID
 					 AND TEXT_DESIGNATIONS.DES_LNG_ID = 4
 					 GROUP BY TEXT_DESIGNATIONS.DES_ID LIMIT 1),
 					''
 				),
 				COALESCE(
-					(SELECT DES_TEXTS.TEX_TEXT 
-					 FROM TEXT_DESIGNATIONS 
+					(SELECT DES_TEXTS.TEX_TEXT
+					 FROM TEXT_DESIGNATIONS
 					 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
-					 WHERE TEXT_DESIGNATIONS.DES_ID = ARTICLES.ART_DES_ID 
+					 WHERE TEXT_DESIGNATIONS.DES_ID = ARTICLES.ART_DES_ID
 					 AND TEXT_DESIGNATIONS.DES_LNG_ID = ?
 					 GROUP BY TEXT_DESIGNATIONS.DES_ID LIMIT 1),
-					(SELECT DES_TEXTS.TEX_TEXT 
-					 FROM TEXT_DESIGNATIONS 
+					(SELECT DES_TEXTS.TEX_TEXT
+					 FROM TEXT_DESIGNATIONS
 					 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
-					 WHERE TEXT_DESIGNATIONS.DES_ID = ARTICLES.ART_DES_ID 
+					 WHERE TEXT_DESIGNATIONS.DES_ID = ARTICLES.ART_DES_ID
 					 AND TEXT_DESIGNATIONS.DES_LNG_ID = 4
 					 GROUP BY TEXT_DESIGNATIONS.DES_ID LIMIT 1),
 					''
 				)
 			) AS ART_PRODUCT_NAME,
 			ART_LOOKUP.ARL_TYPE AS FOUND_VIA
-		FROM 
-			ART_LOOKUP
-			INNER JOIN ARTICLES ON ARTICLES.ART_ID = ART_LOOKUP.ARL_ART_ID
-			INNER JOIN COUNTRY_RESTRICTIONS ON COUNTRY_RESTRICTIONS.CNTR_CTM_ID = ARTICLES.ART_CTM
-				AND COUNTRY_RESTRICTIONS.CNTR_COU_ID = ?
-		WHERE 
-			ART_LOOKUP.ARL_SEARCH_NUMBER = ?
-		ORDER BY 
-			ARTICLES.ART_SUP_BRAND
+		FROM ART_LOOKUP
+		INNER JOIN ARTICLES ON ARTICLES.ART_ID = ART_LOOKUP.ARL_ART_ID
+		INNER JOIN COUNTRY_RESTRICTIONS
+			ON COUNTRY_RESTRICTIONS.CNTR_CTM_ID = ARTICLES.ART_CTM
+			AND COUNTRY_RESTRICTIONS.CNTR_COU_ID = ?
+		WHERE ART_LOOKUP.ARL_SEARCH_NUMBER = ?` + lookupTypeFilter + `
+		ORDER BY ARTICLES.ART_SUP_BRAND, ARTICLES.ART_ARTICLE_NR, ARTICLES.ART_ID
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := q.db.Query(query, languageID, languageID, countryID, normalizedNumber, limit, offset)
+	rows, err := q.db.QueryContext(ctx, query, languageID, languageID, countryID, normalizedNumber, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var results []models.SearchResult
+	results := make([]models.SearchResult, 0)
 	for rows.Next() {
 		var sr models.SearchResult
-
-		err := rows.Scan(
+		if err := rows.Scan(
 			&sr.ArticleID,
 			&sr.ArticleNr,
 			&sr.Brand,
+			&sr.SupplierID,
 			&sr.Name,
 			&sr.FoundVia,
-		)
-		if err != nil {
+		); err != nil {
 			return nil, err
 		}
-
 		results = append(results, sr)
 	}
-
 	return results, rows.Err()
 }
 
@@ -161,7 +173,7 @@ func (q *Queries) GetArticleByID(artID int, languageID int, countryID int) (*mod
 	var statusDate sql.NullString
 	var supersededBy, superseded, oemNumbers, eanNumbers sql.NullString
 
-	err := q.db.QueryRow(query, languageID, languageID, languageID, 
+	err := q.db.QueryRow(query, languageID, languageID, languageID,
 		countryID, countryID, countryID, artID).Scan(
 		&ad.ID,
 		&ad.ArticleNr,
@@ -229,39 +241,39 @@ func (q *Queries) GetArticleByID(artID int, languageID int, countryID int) (*mod
 	if err == nil {
 		ad.Criteria = criteria
 	}
-	
+
 	// Get media
-    mediaList, err := q.GetArticleMedia(artID, languageID)
-    if err == nil {
-	    for _, media := range mediaList {
-		    switch media.Type {
-		    case "JPEG", "PNG", "GIF", "BMP", "TIFF":
-			  ad.Images = append(ad.Images, media)
-		    case "PDF":
-			  ad.Documents = append(ad.Documents, media)
-		    }   
-	    }
-    } else {
-	  // Initialize empty slices if error
-	  ad.Images = []models.ArticleMedia{}
-	  ad.Documents = []models.ArticleMedia{}
-    }
-	
+	mediaList, err := q.GetArticleMedia(artID, languageID)
+	if err == nil {
+		for _, media := range mediaList {
+			switch media.Type {
+			case "JPEG", "PNG", "GIF", "BMP", "TIFF":
+				ad.Images = append(ad.Images, media)
+			case "PDF":
+				ad.Documents = append(ad.Documents, media)
+			}
+		}
+	} else {
+		// Initialize empty slices if error
+		ad.Images = []models.ArticleMedia{}
+		ad.Documents = []models.ArticleMedia{}
+	}
+
 	// Get components
-    components, err := q.GetArticleComponents(artID, languageID, countryID)
-    if err == nil {
-	ad.PartsList = components
-    } else {
-	  ad.PartsList = []models.ArticlePart{}
-    }  
+	components, err := q.GetArticleComponents(artID, languageID, countryID)
+	if err == nil {
+		ad.PartsList = components
+	} else {
+		ad.PartsList = []models.ArticlePart{}
+	}
 
 	// Get accessories
-    accessories, err := q.GetArticleAccessories(artID, languageID, countryID)
-    if err == nil {
-	  ad.Accessories = accessories
-    } else {
-	  ad.Accessories = []models.ArticleAccessory{}
-    }
+	accessories, err := q.GetArticleAccessories(artID, languageID, countryID)
+	if err == nil {
+		ad.Accessories = accessories
+	} else {
+		ad.Accessories = []models.ArticleAccessory{}
+	}
 
 	return &ad, nil
 }
@@ -318,153 +330,111 @@ func (q *Queries) getArticleCriteria(artID int, languageID int) (map[string]stri
 	return criteria, rows.Err()
 }
 
-// GetArticleCrossReferences - отримати крос-референси запчастини
-func (q *Queries) GetArticleCrossReferences(artID int, languageID int) ([]models.CrossReference, error) {
+// GetArticleCrossReferences returns only explicit TecDoc relationships of one
+// concrete ART_ID. It never infers a cross merely because another supplier
+// happens to use the same normalized article number.
+func (q *Queries) GetArticleCrossReferences(ctx context.Context, artID int, languageID int, countryID int) ([]models.CrossReference, error) {
+	articleName := `CONCAT_WS(' ', (` + BuildGetTextSubquery("ARTICLES.ART_COMPLETE_DES_ID", languageID) + `), (` + BuildGetTextSubquery("ARTICLES.ART_DES_ID", languageID) + `))`
+	sourceArticleName := `CONCAT_WS(' ', (` + BuildGetTextSubquery("SOURCE_ARTICLE.ART_COMPLETE_DES_ID", languageID) + `), (` + BuildGetTextSubquery("SOURCE_ARTICLE.ART_DES_ID", languageID) + `))`
+
 	query := `
-		SELECT DISTINCT * FROM (
-			(SELECT
-				ARTICLES.ART_ID, 
+		SELECT DISTINCT ART_ID, ART_ARTICLE_NR, ART_SUP_BRAND, ART_PRODUCT_NAME, CROSS_TYPE
+		FROM (
+			SELECT
+				ARTICLES.ART_ID,
 				ARTICLES.ART_ARTICLE_NR,
 				ARTICLES.ART_SUP_BRAND,
-				CONCAT_WS(' ', 
-					COALESCE(
-						(SELECT DES_TEXTS.TEX_TEXT 
-						 FROM TEXT_DESIGNATIONS 
-						 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
-						 WHERE TEXT_DESIGNATIONS.DES_ID = ARTICLES.ART_COMPLETE_DES_ID 
-						 AND TEXT_DESIGNATIONS.DES_LNG_ID = ?
-						 GROUP BY TEXT_DESIGNATIONS.DES_ID LIMIT 1),
-						''
-					),
-					COALESCE(
-						(SELECT DES_TEXTS.TEX_TEXT 
-						 FROM TEXT_DESIGNATIONS 
-						 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
-						 WHERE TEXT_DESIGNATIONS.DES_ID = ARTICLES.ART_DES_ID 
-						 AND TEXT_DESIGNATIONS.DES_LNG_ID = ?
-						 GROUP BY TEXT_DESIGNATIONS.DES_ID LIMIT 1),
-						''
-					)
-				) AS ART_PRODUCT_NAME,
+				` + articleName + ` AS ART_PRODUCT_NAME,
 				'IAM' AS CROSS_TYPE
-			FROM 
-				ART_LOOKUP
-				INNER JOIN MANUFACTURERS ON MANUFACTURERS.MFA_ID = ART_LOOKUP.ARL_BRA_ID
-				INNER JOIN ART_LOOKUP AS ART_LOOKUP_CROSS ON ART_LOOKUP_CROSS.ARL_SEARCH_NUMBER = ART_LOOKUP.ARL_SEARCH_NUMBER
-					AND ART_LOOKUP_CROSS.ARL_TYPE = 'ArticleNumber'
-					AND ART_LOOKUP_CROSS.ARL_BRA_ID = MANUFACTURERS.MFA_SUP_ID
-				INNER JOIN ARTICLES ON ARTICLES.ART_ID = ART_LOOKUP_CROSS.ARL_ART_ID
-			WHERE 
-				ART_LOOKUP.ARL_ART_ID = ? AND ART_LOOKUP.ARL_TYPE = 'IAMNumber')
-			
-			UNION ALL 
-			
-			(SELECT
-				ARTICLES.ART_ID, 
+			FROM ART_LOOKUP AS SOURCE_LOOKUP
+			INNER JOIN MANUFACTURERS
+				ON MANUFACTURERS.MFA_ID = SOURCE_LOOKUP.ARL_BRA_ID
+			INNER JOIN ART_LOOKUP AS TARGET_LOOKUP
+				ON TARGET_LOOKUP.ARL_SEARCH_NUMBER = SOURCE_LOOKUP.ARL_SEARCH_NUMBER
+				AND TARGET_LOOKUP.ARL_TYPE = 'ArticleNumber'
+				AND TARGET_LOOKUP.ARL_BRA_ID = MANUFACTURERS.MFA_SUP_ID
+			INNER JOIN ARTICLES ON ARTICLES.ART_ID = TARGET_LOOKUP.ARL_ART_ID
+			INNER JOIN COUNTRY_RESTRICTIONS
+				ON COUNTRY_RESTRICTIONS.CNTR_CTM_ID = ARTICLES.ART_CTM
+				AND COUNTRY_RESTRICTIONS.CNTR_COU_ID = ?
+			WHERE SOURCE_LOOKUP.ARL_ART_ID = ?
+				AND SOURCE_LOOKUP.ARL_TYPE = 'IAMNumber'
+				AND ARTICLES.ART_ID <> ?
+
+			UNION ALL
+
+			SELECT
+				ARTICLES.ART_ID,
 				ARTICLES.ART_ARTICLE_NR,
 				ARTICLES.ART_SUP_BRAND,
-				CONCAT_WS(' ', 
-					COALESCE(
-						(SELECT DES_TEXTS.TEX_TEXT 
-						 FROM TEXT_DESIGNATIONS 
-						 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
-						 WHERE TEXT_DESIGNATIONS.DES_ID = ARTICLES.ART_COMPLETE_DES_ID 
-						 AND TEXT_DESIGNATIONS.DES_LNG_ID = ?
-						 GROUP BY TEXT_DESIGNATIONS.DES_ID LIMIT 1),
-						''
-					),
-					COALESCE(
-						(SELECT DES_TEXTS.TEX_TEXT 
-						 FROM TEXT_DESIGNATIONS 
-						 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
-						 WHERE TEXT_DESIGNATIONS.DES_ID = ARTICLES.ART_DES_ID 
-						 AND TEXT_DESIGNATIONS.DES_LNG_ID = ?
-						 GROUP BY TEXT_DESIGNATIONS.DES_ID LIMIT 1),
-						''
-					)
-				) AS ART_PRODUCT_NAME,
-				'ArticleNumber' AS CROSS_TYPE
-			FROM 
-				ART_LOOKUP 
-				INNER JOIN MANUFACTURERS ON MANUFACTURERS.MFA_SUP_ID = ART_LOOKUP.ARL_BRA_ID
-				INNER JOIN ART_LOOKUP AS ART_LOOKUP_CROSS ON ART_LOOKUP_CROSS.ARL_SEARCH_NUMBER = ART_LOOKUP.ARL_SEARCH_NUMBER
-					AND ART_LOOKUP_CROSS.ARL_TYPE = 'IAMNumber'
-					AND ART_LOOKUP_CROSS.ARL_BRA_ID =  MANUFACTURERS.MFA_ID
-				INNER JOIN ARTICLES ON ARTICLES.ART_ID = ART_LOOKUP_CROSS.ARL_ART_ID
-			WHERE 
-				ART_LOOKUP.ARL_ART_ID = ? AND ART_LOOKUP.ARL_TYPE = 'ArticleNumber')
-			
-			UNION ALL 
-			
-			(SELECT
-				NULL, 
-				ART_LOOKUP.ARL_DISPLAY_NR,
-				ART_LOOKUP.ARL_BRA_BRAND,
-				CONCAT_WS(' ', 
-					COALESCE(
-						(SELECT DES_TEXTS.TEX_TEXT 
-						 FROM TEXT_DESIGNATIONS 
-						 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
-						 WHERE TEXT_DESIGNATIONS.DES_ID = ARTICLES.ART_COMPLETE_DES_ID 
-						 AND TEXT_DESIGNATIONS.DES_LNG_ID = ?
-						 GROUP BY TEXT_DESIGNATIONS.DES_ID LIMIT 1),
-						''
-					),
-					COALESCE(
-						(SELECT DES_TEXTS.TEX_TEXT 
-						 FROM TEXT_DESIGNATIONS 
-						 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
-						 WHERE TEXT_DESIGNATIONS.DES_ID = ARTICLES.ART_DES_ID 
-						 AND TEXT_DESIGNATIONS.DES_LNG_ID = ?
-						 GROUP BY TEXT_DESIGNATIONS.DES_ID LIMIT 1),
-						''
-					)
-				) AS ART_PRODUCT_NAME,
+				` + articleName + ` AS ART_PRODUCT_NAME,
+				'IAM' AS CROSS_TYPE
+			FROM ART_LOOKUP AS SOURCE_LOOKUP
+			INNER JOIN MANUFACTURERS
+				ON MANUFACTURERS.MFA_SUP_ID = SOURCE_LOOKUP.ARL_BRA_ID
+			INNER JOIN ART_LOOKUP AS TARGET_LOOKUP
+				ON TARGET_LOOKUP.ARL_SEARCH_NUMBER = SOURCE_LOOKUP.ARL_SEARCH_NUMBER
+				AND TARGET_LOOKUP.ARL_TYPE = 'IAMNumber'
+				AND TARGET_LOOKUP.ARL_BRA_ID = MANUFACTURERS.MFA_ID
+			INNER JOIN ARTICLES ON ARTICLES.ART_ID = TARGET_LOOKUP.ARL_ART_ID
+			INNER JOIN COUNTRY_RESTRICTIONS
+				ON COUNTRY_RESTRICTIONS.CNTR_CTM_ID = ARTICLES.ART_CTM
+				AND COUNTRY_RESTRICTIONS.CNTR_COU_ID = ?
+			WHERE SOURCE_LOOKUP.ARL_ART_ID = ?
+				AND SOURCE_LOOKUP.ARL_TYPE = 'ArticleNumber'
+				AND ARTICLES.ART_ID <> ?
+
+			UNION ALL
+
+			SELECT
+				NULL AS ART_ID,
+				SOURCE_LOOKUP.ARL_DISPLAY_NR AS ART_ARTICLE_NR,
+				SOURCE_LOOKUP.ARL_BRA_BRAND AS ART_SUP_BRAND,
+				` + sourceArticleName + ` AS ART_PRODUCT_NAME,
 				'OEM' AS CROSS_TYPE
-			FROM 
-				ART_LOOKUP 
-				INNER JOIN ARTICLES ON ARTICLES.ART_ID = ?
-			WHERE 
-				ART_LOOKUP.ARL_ART_ID = ? AND ART_LOOKUP.ARL_TYPE = 'OENumber')
-		) as CROSS_REFF
+			FROM ART_LOOKUP AS SOURCE_LOOKUP
+			INNER JOIN ARTICLES AS SOURCE_ARTICLE ON SOURCE_ARTICLE.ART_ID = ?
+			WHERE SOURCE_LOOKUP.ARL_ART_ID = ?
+				AND SOURCE_LOOKUP.ARL_TYPE = 'OENumber'
+		) AS CROSS_REF
+		ORDER BY CROSS_TYPE, ART_SUP_BRAND, ART_ARTICLE_NR
 	`
 
-	rows, err := q.db.Query(query, languageID, languageID, artID, 
-		languageID, languageID, artID, languageID, languageID, artID, artID)
+	rows, err := q.db.QueryContext(ctx, query,
+		countryID, artID, artID,
+		countryID, artID, artID,
+		artID, artID,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var crosses []models.CrossReference
+	crosses := make([]models.CrossReference, 0)
 	for rows.Next() {
 		var cr models.CrossReference
-		var artID sql.NullInt64
-
-		err := rows.Scan(
-			&artID,
+		var linkedArticleID sql.NullInt64
+		if err := rows.Scan(
+			&linkedArticleID,
 			&cr.ArticleNr,
 			&cr.Brand,
 			&cr.Name,
 			&cr.Type,
-		)
-		if err != nil {
-			continue
+		); err != nil {
+			return nil, err
 		}
-
-		if artID.Valid {
-			val := int(artID.Int64)
-			cr.ArticleID = &val
+		if linkedArticleID.Valid {
+			value := int(linkedArticleID.Int64)
+			cr.ArticleID = &value
 		}
-
 		crosses = append(crosses, cr)
 	}
-
 	return crosses, rows.Err()
 }
+
 // GetArticleApplicability повертає список автомобілів для яких підходить запчастина
 func (q *Queries) GetArticleApplicability(articleID, langID, countryID int) ([]models.Applicability, error) {
-query := `
+	query := `
 SELECT DISTINCT
 PASSENGER_CARS.PC_ID,
 MODELS_SERIES.MS_ID,
@@ -508,80 +478,79 @@ LINK_ART.LA_ART_ID = ?
 ORDER BY TYPE_NAME
 `
 
-rows, err := q.db.Query(query, countryID, countryID, articleID)
-if err != nil {
-return nil, err
-}
-defer rows.Close()
+	rows, err := q.db.Query(query, countryID, countryID, articleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-var applicabilities []models.Applicability
-for rows.Next() {
-var a models.Applicability
-var msID int
-var typeName, bodyType, engineCodes, termsOfUse sql.NullString
-var yearFrom, yearTo sql.NullString
-var powerKW, powerPS, capacity sql.NullFloat64
+	var applicabilities []models.Applicability
+	for rows.Next() {
+		var a models.Applicability
+		var msID int
+		var typeName, bodyType, engineCodes, termsOfUse sql.NullString
+		var yearFrom, yearTo sql.NullString
+		var powerKW, powerPS, capacity sql.NullFloat64
 
-err := rows.Scan(
-&a.PCID,
-&msID,
-&typeName,
-&yearFrom,
-&yearTo,
-&powerKW,
-&powerPS,
-&capacity,
-&bodyType,
-&engineCodes,
-&termsOfUse,
-)
-if err != nil {
-return nil, err
-}
+		err := rows.Scan(
+			&a.PCID,
+			&msID,
+			&typeName,
+			&yearFrom,
+			&yearTo,
+			&powerKW,
+			&powerPS,
+			&capacity,
+			&bodyType,
+			&engineCodes,
+			&termsOfUse,
+		)
+		if err != nil {
+			return nil, err
+		}
 
-a.TypeName = nullString(typeName)
+		a.TypeName = nullString(typeName)
 
-// Конвертуємо дати
-if yearFrom.Valid && len(yearFrom.String) >= 4 {
-if year, err := parseYear(yearFrom.String); err == nil {
-a.YearFrom = year
-}
-}
-if yearTo.Valid && len(yearTo.String) >= 4 {
-if year, err := parseYear(yearTo.String); err == nil {
-a.YearTo = year
-}
-}
+		// Конвертуємо дати
+		if yearFrom.Valid && len(yearFrom.String) >= 4 {
+			if year, err := parseYear(yearFrom.String); err == nil {
+				a.YearFrom = year
+			}
+		}
+		if yearTo.Valid && len(yearTo.String) >= 4 {
+			if year, err := parseYear(yearTo.String); err == nil {
+				a.YearTo = year
+			}
+		}
 
-if powerKW.Valid {
-a.PowerKW = int(powerKW.Float64)
-}
-if powerPS.Valid {
-a.PowerHP = int(powerPS.Float64)
-}
-if capacity.Valid {
-a.Capacity = int(capacity.Float64)
-}
+		if powerKW.Valid {
+			a.PowerKW = int(powerKW.Float64)
+		}
+		if powerPS.Valid {
+			a.PowerHP = int(powerPS.Float64)
+		}
+		if capacity.Valid {
+			a.Capacity = int(capacity.Float64)
+		}
 
-a.BodyType = nullString(bodyType)
+		a.BodyType = nullString(bodyType)
 
-// Парсимо коди двигунів
-if engineCodes.Valid && engineCodes.String != "" {
-a.EngineCodes = splitAndClean(engineCodes.String, ",")
+		// Парсимо коди двигунів
+		if engineCodes.Valid && engineCodes.String != "" {
+			a.EngineCodes = splitAndClean(engineCodes.String, ",")
+		}
+
+		a.TermsOfUse = nullString(termsOfUse)
+
+		applicabilities = append(applicabilities, a)
+	}
+
+	return applicabilities, rows.Err()
 }
-
-a.TermsOfUse = nullString(termsOfUse)
-
-applicabilities = append(applicabilities, a)
-}
-
-return applicabilities, rows.Err()
-}
-
 
 // GetArticleMedia повертає список медіа-файлів для запчастини
 func (q *Queries) GetArticleMedia(articleID, langID int) ([]models.ArticleMedia, error) {
-query := `
+	query := `
 SELECT 
 ART_MEDIA_INFO.ART_MEDIA_TYPE,
 (CASE
@@ -600,41 +569,41 @@ WHERE
 ART_MEDIA_INFO.ART_MEDIA_ART_ID = ?
 `
 
-rows, err := q.db.Query(query, articleID)
-if err != nil {
-return nil, err
-}
-defer rows.Close()
+	rows, err := q.db.Query(query, articleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-var mediaList []models.ArticleMedia
-for rows.Next() {
-var media models.ArticleMedia
-var supID int
-var description sql.NullString
+	var mediaList []models.ArticleMedia
+	for rows.Next() {
+		var media models.ArticleMedia
+		var supID int
+		var description sql.NullString
 
-err := rows.Scan(
-&media.Type,
-&media.URL,
-&supID,
-&description,
-)
-if err != nil {
-return nil, err
-}
+		err := rows.Scan(
+			&media.Type,
+			&media.URL,
+			&supID,
+			&description,
+		)
+		if err != nil {
+			return nil, err
+		}
 
-if description.Valid {
-media.Description = description.String
-}
+		if description.Valid {
+			media.Description = description.String
+		}
 
-mediaList = append(mediaList, media)
-}
+		mediaList = append(mediaList, media)
+	}
 
-return mediaList, rows.Err()
+	return mediaList, rows.Err()
 }
 
 // GetArticleComponents повертає список компонентів запчастини
 func (q *Queries) GetArticleComponents(articleID, langID, countryID int) ([]models.ArticlePart, error) {
-query := `
+	query := `
 SELECT DISTINCT 
 ARTICLES.ART_ID,
 ARTICLES.ART_ARTICLE_NR,
@@ -655,38 +624,38 @@ ARTICLES_PART_LIST.APL_ART_ID = ?
 ORDER BY ORDER_IN_LIST
 `
 
-rows, err := q.db.Query(query, countryID, articleID)
-if err != nil {
-return nil, err
-}
-defer rows.Close()
+	rows, err := q.db.Query(query, countryID, articleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-var parts []models.ArticlePart
-for rows.Next() {
-var part models.ArticlePart
-var artID int
+	var parts []models.ArticlePart
+	for rows.Next() {
+		var part models.ArticlePart
+		var artID int
 
-err := rows.Scan(
-&artID,
-&part.ArticleNr,
-&part.Brand,
-&part.Name,
-&part.Quantity,
-&part.Order,
-)
-if err != nil {
-return nil, err
-}
+		err := rows.Scan(
+			&artID,
+			&part.ArticleNr,
+			&part.Brand,
+			&part.Name,
+			&part.Quantity,
+			&part.Order,
+		)
+		if err != nil {
+			return nil, err
+		}
 
-parts = append(parts, part)
-}
+		parts = append(parts, part)
+	}
 
-return parts, rows.Err()
+	return parts, rows.Err()
 }
 
 // GetArticleAccessories повертає список аксесуарів для запчастини
 func (q *Queries) GetArticleAccessories(articleID, langID, countryID int) ([]models.ArticleAccessory, error) {
-query := `
+	query := `
 SELECT DISTINCT
 ARTICLES.ART_ID,
 ARTICLES.ART_ARTICLE_NR,
@@ -705,44 +674,44 @@ WHERE
 ART_ACCS_LIST.ART_ACCS_PARENT_ID = ?
 `
 
-rows, err := q.db.Query(query, countryID, articleID)
-if err != nil {
-return nil, err
-}
-defer rows.Close()
+	rows, err := q.db.Query(query, countryID, articleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-var accessories []models.ArticleAccessory
-for rows.Next() {
-var acc models.ArticleAccessory
-var groupName sql.NullString
+	var accessories []models.ArticleAccessory
+	for rows.Next() {
+		var acc models.ArticleAccessory
+		var groupName sql.NullString
 
-err := rows.Scan(
-&acc.ArticleID,
-&acc.ArticleNr,
-&acc.Brand,
-&acc.Name,
-&groupName,
-)
-if err != nil {
-return nil, err
-}
+		err := rows.Scan(
+			&acc.ArticleID,
+			&acc.ArticleNr,
+			&acc.Brand,
+			&acc.Name,
+			&groupName,
+		)
+		if err != nil {
+			return nil, err
+		}
 
-if groupName.Valid {
-acc.GroupName = groupName.String
-}
+		if groupName.Valid {
+			acc.GroupName = groupName.String
+		}
 
-// TODO: Get criteria if needed
-acc.Criteria = make(map[string]string)
+		// TODO: Get criteria if needed
+		acc.Criteria = make(map[string]string)
 
-accessories = append(accessories, acc)
-}
+		accessories = append(accessories, acc)
+	}
 
-return accessories, rows.Err()
+	return accessories, rows.Err()
 }
 
 // GetArticleOEMNumbers повертає список OEM номерів для запчастини
 func (q *Queries) GetArticleOEMNumbers(articleID int) ([]models.OEMNumber, error) {
-query := `
+	query := `
 SELECT 
 ART_LOOKUP.ARL_DISPLAY_NR AS OEM_NUMBER,
 ART_LOOKUP.ARL_BRA_BRAND AS BRAND,
@@ -756,34 +725,34 @@ ORDER BY
 ART_LOOKUP.ARL_BRA_BRAND, ART_LOOKUP.ARL_DISPLAY_NR
 `
 
-rows, err := q.db.Query(query, articleID)
-if err != nil {
-return nil, err
-}
-defer rows.Close()
+	rows, err := q.db.Query(query, articleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-var oemNumbers []models.OEMNumber
-for rows.Next() {
-var oem models.OEMNumber
+	var oemNumbers []models.OEMNumber
+	for rows.Next() {
+		var oem models.OEMNumber
 
-err := rows.Scan(
-&oem.Number,
-&oem.Brand,
-&oem.BrandID,
-)
-if err != nil {
-return nil, err
-}
+		err := rows.Scan(
+			&oem.Number,
+			&oem.Brand,
+			&oem.BrandID,
+		)
+		if err != nil {
+			return nil, err
+		}
 
-oemNumbers = append(oemNumbers, oem)
-}
+		oemNumbers = append(oemNumbers, oem)
+	}
 
-return oemNumbers, rows.Err()
+	return oemNumbers, rows.Err()
 }
 
 // GetArticleCoordinates повертає координати запчастини на зображенні
 func (q *Queries) GetArticleCoordinates(articleID int) ([]models.ArticleCoordinate, error) {
-query := `
+	query := `
 SELECT 
 SENSITIVE_COORDINATES.SEN_COORD_ART_ID AS ART_ID,
 ARTICLES.ART_ARTICLE_NR,
@@ -805,41 +774,41 @@ ORDER BY
 SENSITIVE_COORDINATES.SEN_COORD_SEQ_NO
 `
 
-rows, err := q.db.Query(query, articleID)
-if err != nil {
-return nil, err
-}
-defer rows.Close()
+	rows, err := q.db.Query(query, articleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-var coordinates []models.ArticleCoordinate
-for rows.Next() {
-var ac models.ArticleCoordinate
+	var coordinates []models.ArticleCoordinate
+	for rows.Next() {
+		var ac models.ArticleCoordinate
 
-err := rows.Scan(
-&ac.ArticleID,
-&ac.ArticleNumber,
-&ac.Brand,
-&ac.MediaSource,
-&ac.CoordinateID,
-&ac.X,
-&ac.Y,
-&ac.Width,
-&ac.Height,
-&ac.Type,
-)
-if err != nil {
-return nil, err
-}
+		err := rows.Scan(
+			&ac.ArticleID,
+			&ac.ArticleNumber,
+			&ac.Brand,
+			&ac.MediaSource,
+			&ac.CoordinateID,
+			&ac.X,
+			&ac.Y,
+			&ac.Width,
+			&ac.Height,
+			&ac.Type,
+		)
+		if err != nil {
+			return nil, err
+		}
 
-coordinates = append(coordinates, ac)
-}
+		coordinates = append(coordinates, ac)
+	}
 
-return coordinates, rows.Err()
+	return coordinates, rows.Err()
 }
 
 // GetArticleCriteria повертає критерії (характеристики) запчастини
 func (q *Queries) GetArticleCriteria(articleID int, languageID int) ([]models.ArticleCriterion, error) {
-query := `
+	query := `
 SELECT 
 ARTICLE_CRITERIA.ACR_CRI_ID,
 (` + BuildGetTextSubquery("CRITERIA.CRI_DES_ID", languageID) + `) AS CRI_NAME,
@@ -857,42 +826,42 @@ ORDER BY
 ARTICLE_CRITERIA.ACR_CRI_ID
 `
 
-rows, err := q.db.Query(query, articleID)
-if err != nil {
-return nil, err
-}
-defer rows.Close()
+	rows, err := q.db.Query(query, articleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-var criteria []models.ArticleCriterion
-for rows.Next() {
-var ac models.ArticleCriterion
-var valueDes sql.NullString
-var shortName sql.NullString
+	var criteria []models.ArticleCriterion
+	for rows.Next() {
+		var ac models.ArticleCriterion
+		var valueDes sql.NullString
+		var shortName sql.NullString
 
-err := rows.Scan(
-&ac.CriteriaID,
-&ac.Name,
-&shortName,
-&ac.Value,
-&valueDes,
-&ac.Type,
-)
-if err != nil {
-return nil, err
-}
+		err := rows.Scan(
+			&ac.CriteriaID,
+			&ac.Name,
+			&shortName,
+			&ac.Value,
+			&valueDes,
+			&ac.Type,
+		)
+		if err != nil {
+			return nil, err
+		}
 
-if shortName.Valid && shortName.String != "" {
-ac.ShortName = shortName.String
-} else {
-ac.ShortName = ac.Name
-}
+		if shortName.Valid && shortName.String != "" {
+			ac.ShortName = shortName.String
+		} else {
+			ac.ShortName = ac.Name
+		}
 
-if valueDes.Valid && valueDes.String != "" {
-ac.ValueDescription = valueDes.String
-}
+		if valueDes.Valid && valueDes.String != "" {
+			ac.ValueDescription = valueDes.String
+		}
 
-criteria = append(criteria, ac)
-}
+		criteria = append(criteria, ac)
+	}
 
-return criteria, rows.Err()
+	return criteria, rows.Err()
 }
