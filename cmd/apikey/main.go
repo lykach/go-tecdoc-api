@@ -22,7 +22,8 @@ func main() {
 	expires := flag.String("expires", "", "Expiration date in YYYY-MM-DD format, empty means no expiration")
 	allowedIPs := flag.String("allowed-ips", "", "Comma-separated allowed IP addresses or CIDR ranges")
 	allowedRoutes := flag.String("allowed-routes", "", "Comma-separated allowed route prefixes, for example /api/v1/articles/*,/api/v1/search/*")
-	rateLimit := flag.Int("rate-limit", 120, "Requests per minute")
+	rateLimit := flag.Int("rate-limit", 120, "Requests per minute; 0 disables rate limiting for a trusted internal key")
+	plainKey := flag.String("key", "", "Register this existing td_live_ key instead of generating a new one")
 	flag.Parse()
 
 	if strings.TrimSpace(*name) == "" {
@@ -62,7 +63,7 @@ func main() {
 	}
 
 	queries := database.New(db)
-	created, err := queries.CreateAPIKey(database.CreateAPIKeyParams{
+	params := database.CreateAPIKeyParams{
 		Name:               *name,
 		OwnerName:          *ownerName,
 		OwnerEmail:         *ownerEmail,
@@ -70,7 +71,14 @@ func main() {
 		AllowedIPs:         *allowedIPs,
 		AllowedRoutes:      *allowedRoutes,
 		RateLimitPerMinute: *rateLimit,
-	})
+		UnlimitedRateLimit: *rateLimit == 0,
+	}
+	var created *database.CreatedAPIKey
+	if strings.TrimSpace(*plainKey) != "" {
+		created, err = queries.CreateAPIKeyFromPlain(params, *plainKey)
+	} else {
+		created, err = queries.CreateAPIKey(params)
+	}
 	if err != nil {
 		log.Fatal(err)
 	}

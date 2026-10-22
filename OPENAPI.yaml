@@ -1,0 +1,4529 @@
+openapi: 3.0.3
+info:
+  title: Go TecDoc API
+  version: 1.2.6
+  description: Read-only TecDoc 2024Q1 REST API production baseline. All protected routes use X-API-Key. Large collections
+    are bounded and paged; malformed query parameters are rejected with HTTP 400; raw source-table access is available under
+    /api/v1/datasets.
+  x-production-baseline: tecdoc2024q1-final
+servers:
+- url: http://localhost:8081
+  description: Local/server deployment
+tags:
+- name: Discovery
+- name: Localization
+- name: Suppliers
+- name: Manufacturers
+- name: Vehicles
+- name: Catalog
+- name: Articles
+- name: Search
+- name: Enrichment
+- name: Datasets
+- name: Exports
+paths:
+  /api/v1/languages:
+    get:
+      tags:
+      - Localization
+      operationId: GetLanguages
+      summary: Get Languages
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': &id001
+          description: API key inactive/expired or IP/route not allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429': &id002
+          description: API key rate limit exceeded
+          headers:
+            Retry-After:
+              description: Seconds until the current per-key rate-limit window resets.
+              schema:
+                type: integer
+                minimum: 1
+            X-RateLimit-Limit:
+              description: Configured requests-per-minute limit for this API key.
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/languages/{id}:
+    get:
+      tags:
+      - Localization
+      operationId: GetLanguageByID
+      summary: Get Language By ID
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/countries:
+    get:
+      tags:
+      - Localization
+      operationId: GetCountries
+      summary: Get Countries
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+  /api/v1/countries/{id}:
+    get:
+      tags:
+      - Localization
+      operationId: GetCountryByID
+      summary: Get Country By ID
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1:
+    get:
+      tags:
+      - Discovery
+      operationId: GetAPIIndex
+      summary: Get APIIndex
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+  /api/v1/import/vehicle-stats:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetVehicleImportStats
+      summary: Get aggregate vehicle import counts without paged fan-out
+      description: Returns exact TecDoc source-table counts for the selected vehicle types. Intended for bulk-import previews so clients do not enumerate every manufacturer/model/vehicle page merely to calculate totals.
+      security:
+      - ApiKeyAuth: []
+      parameters:
+      - name: vehicle_types
+        in: query
+        required: false
+        description: Comma-separated subset of PC, LCV, E-PC, E-LCV, CV, Motorcycle, Engine. Omit for all types.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Aggregate import statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - vehicle_types
+                - manufacturers_total
+                - models_total
+                - vehicles_total
+                - engines_total
+                - by_type
+                properties:
+                  vehicle_types:
+                    type: array
+                    items:
+                      type: string
+                  manufacturers_total:
+                    type: integer
+                  models_total:
+                    type: integer
+                  vehicles_total:
+                    type: integer
+                  engines_total:
+                    type: integer
+                  by_type:
+                    type: object
+                    additionalProperties:
+                      type: integer
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+  /api/v1/import/product-groups:
+    get:
+      tags:
+      - Catalog
+      operationId: GetImportProductGroups
+      summary: Get flat paged product-group tree for bulk import
+      description: Returns a stable flat SEARCH_TREE page for the selected target families. This endpoint is intended for bulk synchronization and avoids one HTTP request per tree node. Passenger subtypes are mapped to the PC tree family.
+      security:
+      - ApiKeyAuth: []
+      parameters:
+      - name: vehicle_types
+        in: query
+        required: false
+        description: Comma-separated subset of PC, LCV, E-PC, E-LCV, CV, Motorcycle, Engine. Passenger subtypes use the PC tree.
+        schema:
+          type: string
+      - name: language_id
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 500
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      responses:
+        '200':
+          description: Flat import page
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - vehicle_types
+                - categories
+                - total
+                - limit
+                - offset
+                properties:
+                  vehicle_types:
+                    type: array
+                    items:
+                      type: string
+                  categories:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+  /api/v1/import/vehicle-product-groups:
+    get:
+      tags:
+      - Catalog
+      operationId: GetImportVehicleProductGroups
+      summary: Get product groups for many vehicles in one importer request
+      description: Returns applicable root SEARCH_TREE categories grouped by TecDoc vehicle ID. Intended for bulk vehicle synchronization to avoid one HTTP and SQL round trip per vehicle. Passenger subtypes use vehicle_type=PC.
+      security:
+      - ApiKeyAuth: []
+      parameters:
+      - name: vehicle_type
+        in: query
+        required: true
+        schema:
+          type: string
+          enum: [PC, CV, Motorcycle]
+      - name: vehicle_ids
+        in: query
+        required: true
+        description: Comma-separated positive TecDoc vehicle IDs, maximum 500 IDs.
+        schema:
+          type: string
+      - name: language_id
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+      - name: ids_only
+        in: query
+        required: false
+        description: When true, returns only category_ids per vehicle and skips SEARCH_TREE text/metadata lookup. Recommended for server-to-server full imports.
+        schema:
+          type: boolean
+          default: false
+      responses:
+        '200':
+          description: Vehicle product groups grouped by vehicle ID
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - vehicle_type
+                - items
+                properties:
+                  vehicle_type:
+                    type: string
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - vehicle_id
+                      properties:
+                        vehicle_id:
+                          type: integer
+                        categories:
+                          description: Full category metadata when ids_only=false.
+                          type: array
+                          items:
+                            type: object
+                            additionalProperties: true
+                        category_ids:
+                          description: Compact root SEARCH_TREE ids when ids_only=true.
+                          type: array
+                          items:
+                            type: integer
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+  /api/v1/suppliers:
+    get:
+      tags:
+      - Suppliers
+      operationId: GetSuppliers
+      summary: Get Suppliers
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: page
+        in: query
+        required: false
+        description: 1-based page number.
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..100.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+      - name: brand
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+  /api/v1/suppliers/{id}:
+    get:
+      tags:
+      - Suppliers
+      operationId: GetSupplierByID
+      summary: Get Supplier By ID
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+        '404': &id003
+          description: Requested resource was not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/suppliers/{id}/products:
+    get:
+      tags:
+      - Suppliers
+      operationId: GetSupplierProducts
+      summary: Get Supplier Products
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/suppliers/{id}/addresses:
+    get:
+      tags:
+      - Suppliers
+      operationId: GetSupplierAddresses
+      summary: Get Supplier Addresses
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/suppliers/{id}/logos:
+    get:
+      tags:
+      - Suppliers
+      operationId: GetSupplierLogos
+      summary: Get Supplier Logos
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/manufacturers:
+    get:
+      tags:
+      - Manufacturers
+      operationId: GetManufacturers
+      summary: Get Manufacturers
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: vehicle_type
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 50
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+  /api/v1/manufacturers/{id}:
+    get:
+      tags:
+      - Manufacturers
+      operationId: GetManufacturerByID
+      summary: Get Manufacturer By ID
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+        '404': *id003
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/manufacturers/{id}/models:
+    get:
+      tags:
+      - Manufacturers
+      operationId: GetModelSeries
+      summary: Get Model Series
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: vehicle_type
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/models/{id}:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetModelSeriesDetails
+      summary: Get Model Series Details
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+        '404': *id003
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/models/{id}/cv:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetCommercialVehicles
+      summary: Get Commercial Vehicles
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 50
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/cv/{id}:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetCommercialVehicleDetails
+      summary: Get Commercial Vehicle Details
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+        '404': *id003
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/cv/{id}/type-numbers:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetCommercialVehicleTypeNumbers
+      summary: Get Commercial Vehicle Type Numbers
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/cv/{id}/criteria:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetCommercialVehicleCriteria
+      summary: Get Commercial Vehicle Criteria
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: product_type_id
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: integer
+          minimum: 0
+      - name: supplier_id
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: integer
+          minimum: 0
+      - name: suggested_only
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: boolean
+  /api/v1/cv/{id}/chassis:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetCommercialVehicleChassis
+      summary: Get Commercial Vehicle Chassis
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/models/{id}/mc:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetMotorcycles
+      summary: Get Motorcycles
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 50
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/mc/{id}:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetMotorcycleDetails
+      summary: Get Motorcycle Details
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+        '404': *id003
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/mc/{id}/type-numbers:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetMotorcycleTypeNumbers
+      summary: Get Motorcycle Type Numbers
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/mc/{id}/criteria:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetMotorcycleCriteria
+      summary: Get Motorcycle Criteria
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: product_type_id
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: integer
+          minimum: 0
+      - name: supplier_id
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: integer
+          minimum: 0
+      - name: suggested_only
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: boolean
+  /api/v1/models/{id}/cars:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetPassengerCars
+      summary: Get Passenger Cars
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: vehicle_type
+        in: query
+        required: false
+        description: Passenger-family subtype membership in the PASSENGER_CARS.PC_TYPE SET. Filtering uses membership semantics; returned vehicle_type preserves the full source SET value (for example PC,LCV). Defaults to PC.
+        schema:
+          type: string
+          enum: [PC, LCV, E-PC, E-LCV]
+          default: PC
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/cars/{id}:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetCarDetails
+      summary: Get Car Details
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+        '404': *id003
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/cars/{id}/product-groups:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetCarProductGroups
+      summary: Get Car Product Groups
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: vehicle_type
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/cars/{id}/type-numbers:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetCarTypeNumbers
+      summary: Get Car Type Numbers
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/cars/{id}/criteria:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetCarCriteria
+      summary: Get Car Criteria
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: product_type_id
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: integer
+          minimum: 0
+      - name: supplier_id
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: integer
+          minimum: 0
+      - name: suggested_only
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: boolean
+  /api/v1/engines:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetEngines
+      summary: List TecDoc Engine Master Rows
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: manufacturer_id
+        in: query
+        required: false
+        description: Positive TecDoc manufacturer ID. Omit to list all engines.
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/engines/{id}:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetEngineDetails
+      summary: Get Engine Details
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+        '404': *id003
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/axles/{id}:
+    get:
+      tags:
+      - Vehicles
+      operationId: GetAxleDetail
+      summary: Get Axle Detail
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+        '404': *id003
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/articles/search:
+    get:
+      tags:
+      - Articles
+      operationId: SearchArticles
+      summary: Search Articles
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: number
+        in: query
+        required: true
+        description: ''
+        schema:
+          type: string
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+  /api/v1/articles/{id}:
+    get:
+      tags:
+      - Articles
+      operationId: GetArticleDetails
+      summary: Get Article Details
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+        '404': *id003
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: related_limit
+        in: query
+        required: false
+        description: Maximum nested accessory relations embedded in article detail. Use /accessories for full paging.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+  /api/v1/articles/{id}/applicability:
+    get:
+      tags:
+      - Articles
+      operationId: GetArticleApplicability
+      summary: Get Article Applicability
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: target_type
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+          enum:
+          - PC
+          - CV
+          - Motorcycle
+          - Engine
+          - Axle
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      description: Paged applicability. Legacy passenger-car vehicles and normalized linkages use the same limit/offset window.
+  /api/v1/articles/{id}/cross-references:
+    get:
+      tags:
+      - Articles
+      operationId: GetArticleCrossReferences
+      summary: Get Article Cross References
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/articles/{id}/media:
+    get:
+      tags:
+      - Articles
+      operationId: GetArticleMedia
+      summary: Get Article Media
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/articles/{id}/components:
+    get:
+      tags:
+      - Articles
+      operationId: GetArticleComponents
+      summary: Get Article Components
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/articles/{id}/accessories:
+    get:
+      tags:
+      - Articles
+      operationId: GetArticleAccessories
+      summary: Get Article Accessories
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      description: Paged accessory relations. `criteria_details` is lossless and may contain repeated criteria; `criteria`
+        is a deterministic compatibility map with one value per criterion name.
+  /api/v1/articles/{id}/oem:
+    get:
+      tags:
+      - Articles
+      operationId: GetArticleOEMNumbers
+      summary: Get Article OEMNumbers
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/articles/{id}/coordinates:
+    get:
+      tags:
+      - Articles
+      operationId: GetArticleCoordinates
+      summary: Get Article Coordinates
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/articles/{id}/criteria:
+    get:
+      tags:
+      - Articles
+      operationId: GetArticleCriteria
+      summary: Get Article Criteria
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: include_hidden
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: boolean
+  /api/v1/articles/{id}/classification:
+    get:
+      tags:
+      - Articles
+      operationId: GetArticleClassification
+      summary: Get Article Classification
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/articles/{id}/info:
+    get:
+      tags:
+      - Articles
+      operationId: GetArticleInfo
+      summary: Get Article Info
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc country identifier used for ARTICLE_INFO country restrictions. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: include_hidden
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: boolean
+  /api/v1/articles/{id}/prices:
+    get:
+      tags:
+      - Articles
+      operationId: GetArticlePrices
+      summary: Get Article Prices
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: include_expired
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: boolean
+  /api/v1/articles/{id}/specifications:
+    get:
+      tags:
+      - Articles
+      operationId: GetArticleSpecifications
+      summary: Get Article Specifications
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: include_hidden
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: boolean
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      description: Bounded, deterministic page. Response includes total, limit, offset, returned and has_more metadata.
+  /api/v1/articles/{id}/linkage-info:
+    get:
+      tags:
+      - Articles
+      operationId: GetArticleLinkageInfo
+      summary: Get Article Linkage Info
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      description: Bounded, deterministic page. Response includes total, limit, offset, returned and has_more metadata.
+  /api/v1/articles/{id}/parts-diagram:
+    get:
+      tags:
+      - Articles
+      operationId: GetPartsDiagram
+      summary: Get Parts Diagram
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      description: Bounded, deterministic page. Response includes total, limit, offset, returned and has_more metadata.
+  /api/v1/enrichment/articles/batch:
+    post:
+      tags:
+      - Enrichment
+      operationId: EnrichArticlesBatch
+      summary: Enrich Articles Batch
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+            example:
+              language_id: 48
+              country_id: 258
+              include:
+              - classification
+              - oem
+              - criteria
+              - barcodes
+              - trade_numbers
+              - media
+              - components
+              - accessories
+              - article_info
+              - supersessions
+              - country_metadata
+              max_accessories: 250
+              items:
+              - request_id: product-1
+                article_number: '50390266'
+                supplier_id: 72
+  /api/v1/quick-start:
+    get:
+      tags:
+      - Catalog
+      operationId: GetQuickStart
+      summary: Get Quick Start
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: vehicle_type
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/product-types/{id}/criteria:
+    get:
+      tags:
+      - Catalog
+      operationId: GetProductTypeCriteria
+      summary: Get Product Type Criteria
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: suggested_only
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: boolean
+  /api/v1/criteria/{id}/values:
+    get:
+      tags:
+      - Catalog
+      operationId: GetCriterionKeyValues
+      summary: Get Criterion Key Values
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..1000.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      description: Bounded, deterministic page. Response includes total, limit, offset, returned and has_more metadata.
+  /api/v1/product-groups/search:
+    get:
+      tags:
+      - Catalog
+      operationId: SearchProductGroups
+      summary: Search Product Groups
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: q
+        in: query
+        required: true
+        description: ''
+        schema:
+          type: string
+      - name: vehicle_type
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+  /api/v1/product-groups:
+    get:
+      tags:
+      - Catalog
+      operationId: GetProductGroups
+      summary: Get Product Groups
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: vehicle_type
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+  /api/v1/product-groups/{id}/children:
+    get:
+      tags:
+      - Catalog
+      operationId: GetCategoryChildren
+      summary: Get Category Children
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: vehicle_type
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+  /api/v1/product-groups/{id}/articles:
+    get:
+      tags:
+      - Catalog
+      operationId: GetProductGroupArticles
+      summary: Get Product Group Articles
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - name: car_id
+        in: query
+        required: true
+        description: Required positive passenger-car ID used for TecDoc applicability filtering.
+        schema:
+          type: integer
+          minimum: 1
+      - name: vehicle_type
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+      - name: criteria
+        in: query
+        required: false
+        description: Optional comma-separated CRITERIA_ID:value filters, for example 6:12,92:9. Malformed filters return HTTP
+          400.
+        schema:
+          type: string
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 50
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+  /api/v1/search/kba:
+    get:
+      tags:
+      - Search
+      operationId: SearchByKBA
+      summary: Search By KBA
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: number
+        in: query
+        required: true
+        description: ''
+        schema:
+          type: string
+      - name: vehicle_type
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+  /api/v1/search/kenteken:
+    get:
+      tags:
+      - Search
+      operationId: SearchByKenteken
+      summary: Search By Kenteken
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: number
+        in: query
+        required: true
+        description: ''
+        schema:
+          type: string
+      - name: vehicle_type
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+  /api/v1/search/type-number:
+    get:
+      tags:
+      - Search
+      operationId: SearchByTypeNumber
+      summary: Search By Type Number
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: number
+        in: query
+        required: true
+        description: ''
+        schema:
+          type: string
+      - name: number_type
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+      - name: vehicle_type
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+  /api/v1/search/article:
+    get:
+      tags:
+      - Search
+      operationId: SearchArticleByNumber
+      summary: Search Article By Number
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: number
+        in: query
+        required: true
+        description: ''
+        schema:
+          type: string
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+  /api/v1/search/article-exact:
+    get:
+      tags:
+      - Search
+      operationId: SearchExactArticleByNumber
+      summary: Search Exact Article By Number
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: number
+        in: query
+        required: true
+        description: ''
+        schema:
+          type: string
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+  /api/v1/search/oem:
+    get:
+      tags:
+      - Search
+      operationId: SearchByOEM
+      summary: Search By OEM
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: number
+        in: query
+        required: true
+        description: ''
+        schema:
+          type: string
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+  /api/v1/search/analog:
+    get:
+      tags:
+      - Search
+      operationId: SearchAnalogs
+      summary: Search Analogs
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: art_id
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: integer
+          minimum: 0
+      - name: search_number
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+      - name: supplier_id
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: integer
+          minimum: 0
+      - name: language_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: country_id
+        in: query
+        required: false
+        description: Positive TecDoc language/country identifier. Omit to use the server default.
+        schema:
+          type: integer
+          minimum: 1
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+  /api/v1/search/oem-oem:
+    get:
+      tags:
+      - Search
+      operationId: SearchOEMByOEM
+      summary: Search OEMBy OEM
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: oem_number
+        in: query
+        required: true
+        description: ''
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..500.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+  /api/v1/datasets:
+    get:
+      tags:
+      - Datasets
+      operationId: GetDatasets
+      summary: Get Datasets
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+  /api/v1/datasets/{table}/schema:
+    get:
+      tags:
+      - Datasets
+      operationId: GetDatasetSchema
+      summary: Get Dataset Schema
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+        '404': *id003
+      parameters:
+      - name: table
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          example: ARTICLES
+  /api/v1/datasets/{table}:
+    get:
+      tags:
+      - Datasets
+      operationId: GetDatasetRows
+      summary: Get Dataset Rows
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+        '404': *id003
+      parameters:
+      - name: table
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          example: ARTICLES
+        description: Exposed TecDoc table name; validated against INFORMATION_SCHEMA.
+      - name: select
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+      - name: filter
+        in: query
+        required: false
+        description: Repeatable filter=COLUMN:value1,value2
+        schema:
+          type: string
+        style: form
+        explode: true
+      - name: order_by
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: string
+      - name: order
+        in: query
+        required: false
+        description: Sort direction. Only ASC or DESC is accepted.
+        schema:
+          type: string
+          enum:
+          - ASC
+          - DESC
+          default: ASC
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..5000.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 5000
+          default: 100
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - name: include_total
+        in: query
+        required: false
+        description: ''
+        schema:
+          type: boolean
+      - name: format
+        in: query
+        required: false
+        description: Response format.
+        schema:
+          type: string
+          enum:
+          - json
+          - csv
+          default: json
+      description: Read-only source rows with deterministic ordering. The requested order_by is followed by composite primary-key
+        tie-breakers; TecDoc tables without a PK fall back to remaining schema columns.
+  /api/v1/exports/cross-references:
+    get:
+      tags:
+      - Exports
+      operationId: ExportCrossReferences
+      summary: Export Cross References
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '504': &id004
+          description: Database query exceeded the bounded export timeout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..5000.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 5000
+          default: 1000
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - name: format
+        in: query
+        required: false
+        description: Export format.
+        schema:
+          type: string
+          enum:
+          - json
+          - csv
+          default: json
+  /api/v1/exports/ean:
+    get:
+      tags:
+      - Exports
+      operationId: ExportEAN
+      summary: Export EAN
+      security:
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server/database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '504': *id004
+        '403': *id001
+        '429': *id002
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        description: 'Page size. Strict range: 1..5000.'
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 5000
+          default: 1000
+      - name: offset
+        in: query
+        required: false
+        description: Zero-based row offset.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - name: format
+        in: query
+        required: false
+        description: Export format.
+        schema:
+          type: string
+          enum:
+          - json
+          - csv
+          default: json
+  /health:
+    get:
+      tags:
+      - Discovery
+      operationId: Health
+      summary: Database health check
+      security: []
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              example:
+                status: ok
+                database: connected
+        '503':
+          description: Database unreachable
+          content:
+            application/json:
+              example:
+                status: error
+                database: unreachable
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Stable code for auth middleware, or human-readable handler error.
+        message:
+          type: string
+          description: Optional human-readable detail for auth middleware errors.
+      additionalProperties: false

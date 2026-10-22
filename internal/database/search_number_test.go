@@ -38,3 +38,17 @@ func TestPaginateSearchResults(t *testing.T) {
 		t.Fatalf("out-of-range pagination = %#v", got)
 	}
 }
+
+func TestUniquePositiveInts(t *testing.T) {
+	t.Parallel()
+	got := uniquePositiveInts([]int{0, 18, 18, -1, 19, 20, 19})
+	want := []int{18, 19, 20}
+	if len(got) != len(want) {
+		t.Fatalf("uniquePositiveInts() = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("uniquePositiveInts() = %#v, want %#v", got, want)
+		}
+	}
+}

@@ -8,37 +8,37 @@ import (
 // GetModelSeries повертає список серій моделей для виробника
 func (q *Queries) GetModelSeries(mfaID int, vehicleType string, languageID int, countryID int, limit, offset int) ([]models.ModelSeries, error) {
 	query := `
-		SELECT  
+		SELECT
 			MODELS_SERIES.MS_ID,
 			MODELS_SERIES.MS_MFA_ID,
 			MODELS_SERIES.MS_CI_FROM,
 			MODELS_SERIES.MS_CI_TO,
 			MODELS_SERIES.MS_TYPE,
 			COALESCE(
-				(SELECT DES_TEXTS.TEX_TEXT 
-				 FROM TEXT_DESIGNATIONS 
+				(SELECT DES_TEXTS.TEX_TEXT
+				 FROM TEXT_DESIGNATIONS
 				 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
-				 WHERE TEXT_DESIGNATIONS.DES_ID = IFNULL(MS_COUNTRY_SPECIFICS.MSCS_NAME_DES, MODELS_SERIES.MS_NAME_DES) 
+				 WHERE TEXT_DESIGNATIONS.DES_ID = IFNULL(MS_COUNTRY_SPECIFICS.MSCS_NAME_DES, MODELS_SERIES.MS_NAME_DES)
 				 AND TEXT_DESIGNATIONS.DES_LNG_ID = ?
 				 GROUP BY TEXT_DESIGNATIONS.DES_ID LIMIT 1),
-				(SELECT DES_TEXTS.TEX_TEXT 
-				 FROM TEXT_DESIGNATIONS 
+				(SELECT DES_TEXTS.TEX_TEXT
+				 FROM TEXT_DESIGNATIONS
 				 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
-				 WHERE TEXT_DESIGNATIONS.DES_ID = IFNULL(MS_COUNTRY_SPECIFICS.MSCS_NAME_DES, MODELS_SERIES.MS_NAME_DES) 
+				 WHERE TEXT_DESIGNATIONS.DES_ID = IFNULL(MS_COUNTRY_SPECIFICS.MSCS_NAME_DES, MODELS_SERIES.MS_NAME_DES)
 				 AND TEXT_DESIGNATIONS.DES_LNG_ID = 4
 				 GROUP BY TEXT_DESIGNATIONS.DES_ID LIMIT 1),
 				'Unknown'
 			) AS MS_NAME
-		FROM 
+		FROM
 			MODELS_SERIES
 			LEFT OUTER JOIN MS_COUNTRY_SPECIFICS
 				ON MS_COUNTRY_SPECIFICS.MSCS_ID = MODELS_SERIES.MS_ID
-				AND MS_COUNTRY_SPECIFICS.MSCS_COU_ID = ? 
-		WHERE  
+				AND MS_COUNTRY_SPECIFICS.MSCS_COU_ID = ?
+		WHERE
 			MODELS_SERIES.MS_MFA_ID = ?
 			AND FIND_IN_SET(?, MODELS_SERIES.MS_TYPE) > 0
-		ORDER BY 
-			MS_NAME
+		ORDER BY
+			MS_NAME, MODELS_SERIES.MS_ID
 		LIMIT ? OFFSET ?
 	`
 
@@ -67,10 +67,14 @@ func (q *Queries) GetModelSeries(mfaID int, vehicleType string, languageID int, 
 
 		// Parse year from date string (YYYY-MM-DD)
 		if yearFrom.Valid && len(yearFrom.String) >= 4 {
-			if year, err := parseYear(yearFrom.String); err == nil { ms.YearFrom = year }
+			if year, err := parseYear(yearFrom.String); err == nil {
+				ms.YearFrom = year
+			}
 		}
 		if yearTo.Valid && len(yearTo.String) >= 4 {
-			if year, err := parseYear(yearTo.String); err == nil { ms.YearTo = year }
+			if year, err := parseYear(yearTo.String); err == nil {
+				ms.YearTo = year
+			}
 		}
 
 		modelSeries = append(modelSeries, ms)
@@ -82,7 +86,7 @@ func (q *Queries) GetModelSeries(mfaID int, vehicleType string, languageID int, 
 // GetModelSeriesByID повертає детальну інформацію про серію моделі
 func (q *Queries) GetModelSeriesByID(msID int, languageID int, countryID int) (*models.ModelDetail, error) {
 	query := `
-		SELECT  
+		SELECT
 			MODELS_SERIES.MS_ID,
 			MODELS_SERIES.MS_MFA_ID,
 			MODELS_SERIES.MS_CI_FROM,
@@ -90,27 +94,27 @@ func (q *Queries) GetModelSeriesByID(msID int, languageID int, countryID int) (*
 			MODELS_SERIES.MS_TYPE,
 			MANUFACTURERS.MFA_BRAND,
 			COALESCE(
-				(SELECT DES_TEXTS.TEX_TEXT 
-				 FROM TEXT_DESIGNATIONS 
+				(SELECT DES_TEXTS.TEX_TEXT
+				 FROM TEXT_DESIGNATIONS
 				 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
-				 WHERE TEXT_DESIGNATIONS.DES_ID = IFNULL(MS_COUNTRY_SPECIFICS.MSCS_NAME_DES, MODELS_SERIES.MS_NAME_DES) 
+				 WHERE TEXT_DESIGNATIONS.DES_ID = IFNULL(MS_COUNTRY_SPECIFICS.MSCS_NAME_DES, MODELS_SERIES.MS_NAME_DES)
 				 AND TEXT_DESIGNATIONS.DES_LNG_ID = ?
 				 GROUP BY TEXT_DESIGNATIONS.DES_ID LIMIT 1),
-				(SELECT DES_TEXTS.TEX_TEXT 
-				 FROM TEXT_DESIGNATIONS 
+				(SELECT DES_TEXTS.TEX_TEXT
+				 FROM TEXT_DESIGNATIONS
 				 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
-				 WHERE TEXT_DESIGNATIONS.DES_ID = IFNULL(MS_COUNTRY_SPECIFICS.MSCS_NAME_DES, MODELS_SERIES.MS_NAME_DES) 
+				 WHERE TEXT_DESIGNATIONS.DES_ID = IFNULL(MS_COUNTRY_SPECIFICS.MSCS_NAME_DES, MODELS_SERIES.MS_NAME_DES)
 				 AND TEXT_DESIGNATIONS.DES_LNG_ID = 4
 				 GROUP BY TEXT_DESIGNATIONS.DES_ID LIMIT 1),
 				'Unknown'
 			) AS MS_NAME
-		FROM 
+		FROM
 			MODELS_SERIES
 			INNER JOIN MANUFACTURERS ON MANUFACTURERS.MFA_ID = MODELS_SERIES.MS_MFA_ID
 			LEFT OUTER JOIN MS_COUNTRY_SPECIFICS
 				ON MS_COUNTRY_SPECIFICS.MSCS_ID = MODELS_SERIES.MS_ID
-				AND MS_COUNTRY_SPECIFICS.MSCS_COU_ID = ? 
-		WHERE  
+				AND MS_COUNTRY_SPECIFICS.MSCS_COU_ID = ?
+		WHERE
 			MODELS_SERIES.MS_ID = ?
 	`
 
@@ -136,10 +140,14 @@ func (q *Queries) GetModelSeriesByID(msID int, languageID int, countryID int) (*
 
 	// Parse years
 	if yearFrom.Valid && len(yearFrom.String) >= 4 {
-		if year, err := parseYear(yearFrom.String); err == nil { md.YearFrom = year }
+		if year, err := parseYear(yearFrom.String); err == nil {
+			md.YearFrom = year
+		}
 	}
 	if yearTo.Valid && len(yearTo.String) >= 4 {
-		if year, err := parseYear(yearTo.String); err == nil { md.YearTo = year }
+		if year, err := parseYear(yearTo.String); err == nil {
+			md.YearTo = year
+		}
 	}
 
 	return &md, nil
@@ -148,11 +156,11 @@ func (q *Queries) GetModelSeriesByID(msID int, languageID int, countryID int) (*
 // CountModelSeries повертає загальну кількість серій моделей для виробника
 func (q *Queries) CountModelSeries(mfaID int, vehicleType string) (int, error) {
 	query := `
-		SELECT 
+		SELECT
 			COUNT(*)
-		FROM 
+		FROM
 			MODELS_SERIES
-		WHERE 
+		WHERE
 			MS_MFA_ID = ?
 			AND FIND_IN_SET(?, MS_TYPE) > 0
 	`
@@ -161,4 +169,3 @@ func (q *Queries) CountModelSeries(mfaID int, vehicleType string) (int, error) {
 	err := q.db.QueryRow(query, mfaID, vehicleType).Scan(&count)
 	return count, err
 }
-

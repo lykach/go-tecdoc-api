@@ -1,8 +1,9 @@
 package handlers
 
 import (
-	"net/http"
 	"go-tecdoc-api/internal/models"
+	"net/http"
+	"strings"
 )
 
 // GetPassengerCars - отримати список легкових автомобілів для серії моделі
@@ -14,27 +15,33 @@ func (h *Handler) GetPassengerCars(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := getIntParam(r, "limit", 100)
-	offset := getIntParam(r, "offset", 0)
+	page, err := parsePageParams(r, 100, 500)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit, offset := page.Limit, page.Offset
+	vehicleType := strings.TrimSpace(r.URL.Query().Get("vehicle_type"))
+	if vehicleType == "" {
+		vehicleType = "PC"
+	}
+	switch vehicleType {
+	case "PC", "LCV", "E-PC", "E-LCV":
+	default:
+		h.respondError(w, http.StatusBadRequest, "invalid query parameter: vehicle_type must be one of PC, LCV, E-PC, E-LCV")
+		return
+	}
 	languageID := h.getLanguageID(r)
 	countryID := h.getCountryID(r)
 
-	// Валідація
-	if limit > 500 {
-		limit = 500
-	}
-	if limit < 1 {
-		limit = 100
-	}
-
-	cars, err := h.queries.GetPassengerCars(msID, languageID, countryID, limit, offset)
+	cars, err := h.queries.GetPassengerCars(msID, vehicleType, languageID, countryID, limit, offset)
 	if err != nil {
 		h.respondError(w, http.StatusInternalServerError, "Failed to fetch passenger cars: "+err.Error())
 		return
 	}
 
 	// Отримати загальну кількість
-	total, err := h.queries.CountPassengerCars(msID)
+	total, err := h.queries.CountPassengerCars(msID, vehicleType)
 	if err != nil {
 		h.respondError(w, http.StatusInternalServerError, "Failed to count passenger cars: "+err.Error())
 		return

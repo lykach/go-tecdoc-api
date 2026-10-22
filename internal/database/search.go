@@ -2,7 +2,6 @@ package database
 
 import (
 	"context"
-	"sort"
 	"strings"
 
 	"go-tecdoc-api/internal/models"
@@ -22,13 +21,16 @@ func (q *Queries) SearchByOEMNumber(ctx context.Context, oemNumber string, langu
 				(` + BuildGetTextSubquery("ARTICLES.ART_COMPLETE_DES_ID", languageID) + `),
 				(` + BuildGetTextSubquery("ARTICLES.ART_DES_ID", languageID) + `)
 			) AS ART_PRODUCT_NAME,
-			'OENumber' AS FOUND_VIA
+			'OENumber' AS FOUND_VIA,
+			'ArticleNumber' AS RELATION_TYPE
 		FROM ART_LOOKUP
 		INNER JOIN ARTICLES ON ARTICLES.ART_ID = ART_LOOKUP.ARL_ART_ID
-		INNER JOIN COUNTRY_RESTRICTIONS
-			ON COUNTRY_RESTRICTIONS.CNTR_CTM_ID = ARTICLES.ART_CTM
-			AND COUNTRY_RESTRICTIONS.CNTR_COU_ID = ?
-		WHERE ART_LOOKUP.ARL_SEARCH_NUMBER = ?
+		WHERE (ARTICLES.ART_CTM = 0 OR EXISTS (
+			SELECT 1 FROM COUNTRY_RESTRICTIONS
+			WHERE COUNTRY_RESTRICTIONS.CNTR_CTM_ID = ARTICLES.ART_CTM
+				AND COUNTRY_RESTRICTIONS.CNTR_COU_ID = ?
+		))
+			AND ART_LOOKUP.ARL_SEARCH_NUMBER = ?
 			AND ART_LOOKUP.ARL_TYPE = 'OENumber'
 		ORDER BY ARTICLES.ART_SUP_BRAND, ARTICLES.ART_ARTICLE_NR, ARTICLES.ART_ID
 		LIMIT ? OFFSET ?
@@ -50,6 +52,7 @@ func (q *Queries) SearchByOEMNumber(ctx context.Context, oemNumber string, langu
 			&sr.SupplierID,
 			&sr.Name,
 			&sr.FoundVia,
+			&sr.RelationType,
 		); err != nil {
 			return nil, err
 		}
@@ -65,10 +68,12 @@ func (q *Queries) ArticleExistsForCountry(ctx context.Context, articleID int, co
 		SELECT EXISTS (
 			SELECT 1
 			FROM ARTICLES
-			INNER JOIN COUNTRY_RESTRICTIONS
-				ON COUNTRY_RESTRICTIONS.CNTR_CTM_ID = ARTICLES.ART_CTM
-				AND COUNTRY_RESTRICTIONS.CNTR_COU_ID = ?
-			WHERE ARTICLES.ART_ID = ?
+			WHERE (ARTICLES.ART_CTM = 0 OR EXISTS (
+				SELECT 1 FROM COUNTRY_RESTRICTIONS
+				WHERE COUNTRY_RESTRICTIONS.CNTR_CTM_ID = ARTICLES.ART_CTM
+					AND COUNTRY_RESTRICTIONS.CNTR_COU_ID = ?
+			))
+				AND ARTICLES.ART_ID = ?
 		)
 	`
 	var exists bool
@@ -79,43 +84,149 @@ func (q *Queries) ArticleExistsForCountry(ctx context.Context, articleID int, co
 }
 
 // SearchAnalogsByArticleID returns IAM articles connected through TecDoc's
-// explicit cross-reference graph for one concrete source ART_ID. It does not
-// join unrelated ArticleNumber rows solely by equal normalized number.
+// explicit cross-reference graph for one concrete source ART_ID.
 func (q *Queries) SearchAnalogsByArticleID(ctx context.Context, articleID int, languageID int, countryID int, limit, offset int) ([]models.SearchResult, error) {
-	crosses, err := q.GetArticleCrossReferences(ctx, articleID, languageID, countryID)
+	return q.SearchAnalogsByArticleIDs(ctx, []int{articleID}, languageID, countryID, limit, offset)
+}
+
+// SearchAnalogsByArticleIDs resolves one commercial supplier article that may
+// be represented by several technical ART_ID rows. All source IDs must already
+// have been proven by supplier_id + own ArticleNumber. One SQL statement keeps
+// short/common article searches within the storefront timeout and returns the
+// union of explicit forward and reverse IAM links without inferring equality
+// from a bare number.
+func (q *Queries) SearchAnalogsByArticleIDs(ctx context.Context, articleIDs []int, languageID int, countryID int, limit, offset int) ([]models.SearchResult, error) {
+	ids := uniquePositiveInts(articleIDs)
+	if len(ids) == 0 {
+		return []models.SearchResult{}, nil
+	}
+	if limit < 1 {
+		limit = 200
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	articleName := `CONCAT_WS(' ', (` + BuildGetTextSubquery("ARTICLES.ART_COMPLETE_DES_ID", languageID) + `), (` + BuildGetTextSubquery("ARTICLES.ART_DES_ID", languageID) + `))`
+	query := `
+		SELECT DISTINCT
+			ART_ID,
+			ART_ARTICLE_NR,
+			ART_SUP_BRAND,
+			ART_SUP_ID,
+			ART_PRODUCT_NAME,
+			'IAM' AS FOUND_VIA,
+			'IAM' AS RELATION_TYPE
+		FROM (
+			SELECT
+				ARTICLES.ART_ID,
+				ARTICLES.ART_ARTICLE_NR,
+				ARTICLES.ART_SUP_BRAND,
+				ARTICLES.ART_SUP_ID,
+				` + articleName + ` AS ART_PRODUCT_NAME
+			FROM ART_LOOKUP AS SOURCE_LOOKUP
+			INNER JOIN MANUFACTURERS
+				ON MANUFACTURERS.MFA_ID = SOURCE_LOOKUP.ARL_BRA_ID
+			INNER JOIN ART_LOOKUP AS TARGET_LOOKUP
+				ON TARGET_LOOKUP.ARL_SEARCH_NUMBER = SOURCE_LOOKUP.ARL_SEARCH_NUMBER
+				AND TARGET_LOOKUP.ARL_TYPE = 'ArticleNumber'
+				AND TARGET_LOOKUP.ARL_BRA_ID = MANUFACTURERS.MFA_SUP_ID
+			INNER JOIN ARTICLES ON ARTICLES.ART_ID = TARGET_LOOKUP.ARL_ART_ID
+			WHERE (ARTICLES.ART_CTM = 0 OR EXISTS (
+				SELECT 1 FROM COUNTRY_RESTRICTIONS
+				WHERE COUNTRY_RESTRICTIONS.CNTR_CTM_ID = ARTICLES.ART_CTM
+					AND COUNTRY_RESTRICTIONS.CNTR_COU_ID = ?
+			))
+				AND SOURCE_LOOKUP.ARL_ART_ID IN (` + placeholders + `)
+				AND SOURCE_LOOKUP.ARL_TYPE = 'IAMNumber'
+				AND ARTICLES.ART_ID NOT IN (` + placeholders + `)
+
+			UNION ALL
+
+			SELECT
+				ARTICLES.ART_ID,
+				ARTICLES.ART_ARTICLE_NR,
+				ARTICLES.ART_SUP_BRAND,
+				ARTICLES.ART_SUP_ID,
+				` + articleName + ` AS ART_PRODUCT_NAME
+			FROM ART_LOOKUP AS SOURCE_LOOKUP
+			INNER JOIN MANUFACTURERS
+				ON MANUFACTURERS.MFA_SUP_ID = SOURCE_LOOKUP.ARL_BRA_ID
+			INNER JOIN ART_LOOKUP AS TARGET_LOOKUP
+				ON TARGET_LOOKUP.ARL_SEARCH_NUMBER = SOURCE_LOOKUP.ARL_SEARCH_NUMBER
+				AND TARGET_LOOKUP.ARL_TYPE = 'IAMNumber'
+				AND TARGET_LOOKUP.ARL_BRA_ID = MANUFACTURERS.MFA_ID
+			INNER JOIN ARTICLES ON ARTICLES.ART_ID = TARGET_LOOKUP.ARL_ART_ID
+			WHERE (ARTICLES.ART_CTM = 0 OR EXISTS (
+				SELECT 1 FROM COUNTRY_RESTRICTIONS
+				WHERE COUNTRY_RESTRICTIONS.CNTR_CTM_ID = ARTICLES.ART_CTM
+					AND COUNTRY_RESTRICTIONS.CNTR_COU_ID = ?
+			))
+				AND SOURCE_LOOKUP.ARL_ART_ID IN (` + placeholders + `)
+				AND SOURCE_LOOKUP.ARL_TYPE = 'ArticleNumber'
+				AND ARTICLES.ART_ID NOT IN (` + placeholders + `)
+		) AS IAM_CROSSES
+		ORDER BY ART_SUP_BRAND, ART_ARTICLE_NR, ART_ID
+		LIMIT ? OFFSET ?
+	`
+
+	args := make([]any, 0, 4*len(ids)+4)
+	args = append(args, countryID)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	args = append(args, countryID)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	args = append(args, limit, offset)
+
+	rows, err := q.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
-	seen := make(map[int]struct{}, len(crosses))
-	results := make([]models.SearchResult, 0, len(crosses))
-	for _, cross := range crosses {
-		if cross.ArticleID == nil || *cross.ArticleID <= 0 || strings.EqualFold(strings.TrimSpace(cross.Type), "OEM") {
-			continue
+	results := make([]models.SearchResult, 0)
+	for rows.Next() {
+		var item models.SearchResult
+		if err := rows.Scan(
+			&item.ArticleID,
+			&item.ArticleNr,
+			&item.Brand,
+			&item.SupplierID,
+			&item.Name,
+			&item.FoundVia,
+			&item.RelationType,
+		); err != nil {
+			return nil, err
 		}
-		if _, exists := seen[*cross.ArticleID]; exists {
-			continue
-		}
-		seen[*cross.ArticleID] = struct{}{}
-		results = append(results, models.SearchResult{
-			ArticleID: *cross.ArticleID,
-			ArticleNr: cross.ArticleNr,
-			Brand:     cross.Brand,
-			Name:      cross.Name,
-			FoundVia:  "IAM",
-		})
+		results = append(results, item)
 	}
+	return results, rows.Err()
+}
 
-	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].Brand != results[j].Brand {
-			return results[i].Brand < results[j].Brand
+func uniquePositiveInts(values []int) []int {
+	result := make([]int, 0, len(values))
+	seen := make(map[int]struct{}, len(values))
+	for _, value := range values {
+		if value <= 0 {
+			continue
 		}
-		if results[i].ArticleNr != results[j].ArticleNr {
-			return results[i].ArticleNr < results[j].ArticleNr
+		if _, exists := seen[value]; exists {
+			continue
 		}
-		return results[i].ArticleID < results[j].ArticleID
-	})
-	return paginateSearchResults(results, limit, offset), nil
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 // FindExactArticleIDsBySupplier resolves a number only when both parts of the
@@ -126,10 +237,12 @@ func (q *Queries) FindExactArticleIDsBySupplier(ctx context.Context, searchNumbe
 		SELECT DISTINCT ARTICLES.ART_ID
 		FROM ART_LOOKUP
 		INNER JOIN ARTICLES ON ARTICLES.ART_ID = ART_LOOKUP.ARL_ART_ID
-		INNER JOIN COUNTRY_RESTRICTIONS
-			ON COUNTRY_RESTRICTIONS.CNTR_CTM_ID = ARTICLES.ART_CTM
-			AND COUNTRY_RESTRICTIONS.CNTR_COU_ID = ?
-		WHERE ART_LOOKUP.ARL_SEARCH_NUMBER = ?
+		WHERE (ARTICLES.ART_CTM = 0 OR EXISTS (
+			SELECT 1 FROM COUNTRY_RESTRICTIONS
+			WHERE COUNTRY_RESTRICTIONS.CNTR_CTM_ID = ARTICLES.ART_CTM
+				AND COUNTRY_RESTRICTIONS.CNTR_COU_ID = ?
+		))
+			AND ART_LOOKUP.ARL_SEARCH_NUMBER = ?
 			AND ART_LOOKUP.ARL_TYPE = 'ArticleNumber'
 			AND ARTICLES.ART_SUP_ID = ?
 		ORDER BY ARTICLES.ART_ID
@@ -160,16 +273,28 @@ func (q *Queries) SearchOEMByOEMNumber(ctx context.Context, oemNumber string, li
 	query := `
 		SELECT DISTINCT
 			SOURCE.ARL_ART_ID AS ART_ID,
-			ART_LOOKUP.ARL_BRA_BRAND AS CROSS_BRAND,
-			ART_LOOKUP.ARL_DISPLAY_NR AS CROSS_NUMBER
+			COALESCE(
+				NULLIF(TRIM(ART_LOOKUP.ARL_BRA_BRAND), ''),
+				NULLIF(TRIM(MANUFACTURERS.MFA_BRAND), ''),
+				''
+			) AS CROSS_BRAND,
+			ART_LOOKUP.ARL_DISPLAY_NR AS CROSS_NUMBER,
+			COALESCE(ART_LOOKUP.ARL_BRA_ID, 0) AS MANUFACTURER_ID,
+			COALESCE(
+				NULLIF(TRIM(ART_LOOKUP.ARL_BRA_BRAND), ''),
+				NULLIF(TRIM(MANUFACTURERS.MFA_BRAND), ''),
+				''
+			) AS MANUFACTURER
 		FROM ART_LOOKUP AS SOURCE
 		INNER JOIN ART_LOOKUP
 			ON ART_LOOKUP.ARL_ART_ID = SOURCE.ARL_ART_ID
 			AND ART_LOOKUP.ARL_TYPE = 'OENumber'
 			AND ART_LOOKUP.ARL_SEARCH_NUMBER != SOURCE.ARL_SEARCH_NUMBER
+		LEFT JOIN MANUFACTURERS
+			ON MANUFACTURERS.MFA_ID = ART_LOOKUP.ARL_BRA_ID
 		WHERE SOURCE.ARL_SEARCH_NUMBER = ?
 			AND SOURCE.ARL_TYPE = 'OENumber'
-		ORDER BY ART_LOOKUP.ARL_BRA_BRAND, ART_LOOKUP.ARL_DISPLAY_NR
+		ORDER BY MANUFACTURER, ART_LOOKUP.ARL_DISPLAY_NR
 		LIMIT ? OFFSET ?
 	`
 
@@ -182,7 +307,13 @@ func (q *Queries) SearchOEMByOEMNumber(ctx context.Context, oemNumber string, li
 	results := make([]models.OEMCrossReference, 0)
 	for rows.Next() {
 		var item models.OEMCrossReference
-		if err := rows.Scan(&item.ArticleID, &item.CrossBrand, &item.CrossNumber); err != nil {
+		if err := rows.Scan(
+			&item.ArticleID,
+			&item.CrossBrand,
+			&item.CrossNumber,
+			&item.ManufacturerID,
+			&item.Manufacturer,
+		); err != nil {
 			return nil, err
 		}
 		results = append(results, item)

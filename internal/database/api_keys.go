@@ -40,6 +40,7 @@ type CreateAPIKeyParams struct {
 	AllowedIPs         string
 	AllowedRoutes      string
 	RateLimitPerMinute int
+	UnlimitedRateLimit bool
 }
 
 type CreatedAPIKey struct {
@@ -69,21 +70,35 @@ func APIKeyPublicPrefix(plain string) string {
 }
 
 func (q *Queries) CreateAPIKey(params CreateAPIKeyParams) (*CreatedAPIKey, error) {
-	name := strings.TrimSpace(params.Name)
-	if name == "" {
-		return nil, errors.New("api key name is required")
-	}
-
-	rateLimit := params.RateLimitPerMinute
-	if rateLimit <= 0 {
-		rateLimit = 120
-	}
-
 	plain, err := GenerateAPIKey()
 	if err != nil {
 		return nil, err
 	}
+	return q.CreateAPIKeyFromPlain(params, plain)
+}
 
+// CreateAPIKeyFromPlain registers a pre-generated key. It is intentionally
+// separate from normal random-key creation and is useful when migrating or
+// provisioning a test key that was generated outside this service.
+func (q *Queries) CreateAPIKeyFromPlain(params CreateAPIKeyParams, plain string) (*CreatedAPIKey, error) {
+	name := strings.TrimSpace(params.Name)
+	if name == "" {
+		return nil, errors.New("api key name is required")
+	}
+	plain = strings.TrimSpace(plain)
+	if !strings.HasPrefix(plain, apiKeyPrefix) || len(plain) != len(apiKeyPrefix)+64 {
+		return nil, errors.New("api key must use td_live_ followed by 64 characters")
+	}
+	if _, err := hex.DecodeString(strings.TrimPrefix(plain, apiKeyPrefix)); err != nil {
+		return nil, errors.New("api key suffix must be hexadecimal")
+	}
+
+	rateLimit := params.RateLimitPerMinute
+	if params.UnlimitedRateLimit {
+		rateLimit = 0
+	} else if rateLimit <= 0 {
+		rateLimit = 120
+	}
 	keyHash := HashAPIKey(plain)
 	keyPrefix := APIKeyPublicPrefix(plain)
 
@@ -119,12 +134,10 @@ INSERT INTO api_keys (
 	if err != nil {
 		return nil, fmt.Errorf("read created api key id: %w", err)
 	}
-
 	record, err := q.GetAPIKeyByID(uint64(id))
 	if err != nil {
 		return nil, err
 	}
-
 	return &CreatedAPIKey{Record: record, Plain: plain}, nil
 }
 

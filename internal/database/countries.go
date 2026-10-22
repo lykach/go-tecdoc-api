@@ -14,7 +14,7 @@ func (q *Queries) GetCountries(langID int, includeGroups bool) ([]models.Country
 	}
 
 	query := fmt.Sprintf(`
-		SELECT 
+		SELECT
 			COU_ID,
 			COU_CODE,
 			(%s) AS COU_NAME,
@@ -24,11 +24,11 @@ func (q *Queries) GetCountries(langID int, includeGroups bool) ([]models.Country
 			COU_ISOCODE2,
 			COU_ISOCODE3,
 			COU_ISOCODENO
-		FROM 
+		FROM
 			COUNTRIES
 		%s
-		ORDER BY 
-			COU_NAME
+		ORDER BY
+			COU_NAME, COU_ID
 	`, BuildGetTextSubquery("COU_DES", langID), whereClause)
 
 	rows, err := q.db.Query(query)
@@ -89,7 +89,7 @@ func (q *Queries) GetCountries(langID int, includeGroups bool) ([]models.Country
 // GetCountryByID повертає деталі країни за ID
 func (q *Queries) GetCountryByID(id, langID int) (*models.Country, error) {
 	query := fmt.Sprintf(`
-		SELECT 
+		SELECT
 			COU_ID,
 			COU_CODE,
 			(%s) AS COU_NAME,
@@ -100,9 +100,9 @@ func (q *Queries) GetCountryByID(id, langID int) (*models.Country, error) {
 			COU_ISOCODE2,
 			COU_ISOCODE3,
 			COU_ISOCODENO
-		FROM 
+		FROM
 			COUNTRIES
-		WHERE 
+		WHERE
 			COU_ID = ?
 	`, BuildGetTextSubquery("COU_DES", langID), BuildGetTextSubquery("COU_CURRENCY_CODE_DES", langID))
 

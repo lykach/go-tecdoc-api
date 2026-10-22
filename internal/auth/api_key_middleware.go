@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -71,9 +72,18 @@ func (m *APIKeyMiddleware) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if apiKey.RateLimitPerMinute > 0 && !m.limiter.Allow(apiKey.ID, apiKey.RateLimitPerMinute) {
-			m.reject(w, r, &apiKey.ID, keyPrefix, http.StatusTooManyRequests, "rate_limit_exceeded", "API key rate limit exceeded")
-			return
+		if apiKey.RateLimitPerMinute > 0 {
+			allowed, retryAfter := m.limiter.Allow(apiKey.ID, apiKey.RateLimitPerMinute)
+			if !allowed {
+				seconds := int((retryAfter + time.Second - 1) / time.Second)
+				if seconds < 1 {
+					seconds = 1
+				}
+				w.Header().Set("Retry-After", fmt.Sprintf("%d", seconds))
+				w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", apiKey.RateLimitPerMinute))
+				m.reject(w, r, &apiKey.ID, keyPrefix, http.StatusTooManyRequests, "rate_limit_exceeded", "API key rate limit exceeded")
+				return
+			}
 		}
 
 		if err := m.queries.TouchAPIKeyLastUsed(apiKey.ID); err != nil {
@@ -201,9 +211,9 @@ func NewMemoryRateLimiter(window time.Duration) *MemoryRateLimiter {
 	}
 }
 
-func (l *MemoryRateLimiter) Allow(apiKeyID uint64, limit int) bool {
+func (l *MemoryRateLimiter) Allow(apiKeyID uint64, limit int) (bool, time.Duration) {
 	if limit <= 0 {
-		return true
+		return true, 0
 	}
 
 	now := time.Now()
@@ -213,13 +223,17 @@ func (l *MemoryRateLimiter) Allow(apiKeyID uint64, limit int) bool {
 	bucket, ok := l.items[apiKeyID]
 	if !ok || now.Sub(bucket.windowStartedAt) >= l.window {
 		l.items[apiKeyID] = &rateLimitBucket{windowStartedAt: now, count: 1}
-		return true
+		return true, 0
 	}
 
 	if bucket.count >= limit {
-		return false
+		retryAfter := l.window - now.Sub(bucket.windowStartedAt)
+		if retryAfter < 0 {
+			retryAfter = 0
+		}
+		return false, retryAfter
 	}
 
 	bucket.count++
-	return true
+	return true, 0
 }

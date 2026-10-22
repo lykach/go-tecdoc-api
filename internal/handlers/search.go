@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -12,10 +11,10 @@ import (
 )
 
 const (
-	defaultSearchLimit  = 200
-	maxSearchLimit      = 5000
+	defaultSearchLimit  = 100
+	maxSearchLimit      = 500
 	searchQueryTimeout  = 15 * time.Second
-	maxSourceArticleIDs = 10
+	maxSourceArticleIDs = 200
 )
 
 func clampSearchLimit(limit int) int {
@@ -37,8 +36,12 @@ func (h *Handler) SearchArticleByNumber(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	limit := clampSearchLimit(getIntParam(r, "limit", defaultSearchLimit))
-	offset := getIntParam(r, "offset", 0)
+	page, err := parsePageParams(r, defaultSearchLimit, maxSearchLimit)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit, offset := page.Limit, page.Offset
 	languageID := h.getLanguageID(r)
 	countryID := h.getCountryID(r)
 
@@ -63,8 +66,12 @@ func (h *Handler) SearchExactArticleByNumber(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	limit := clampSearchLimit(getIntParam(r, "limit", defaultSearchLimit))
-	offset := getIntParam(r, "offset", 0)
+	page, err := parsePageParams(r, defaultSearchLimit, maxSearchLimit)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit, offset := page.Limit, page.Offset
 	languageID := h.getLanguageID(r)
 	countryID := h.getCountryID(r)
 
@@ -87,8 +94,12 @@ func (h *Handler) SearchByOEM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := clampSearchLimit(getIntParam(r, "limit", defaultSearchLimit))
-	offset := getIntParam(r, "offset", 0)
+	page, err := parsePageParams(r, defaultSearchLimit, maxSearchLimit)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit, offset := page.Limit, page.Offset
 	languageID := h.getLanguageID(r)
 	countryID := h.getCountryID(r)
 
@@ -104,7 +115,7 @@ func (h *Handler) SearchByOEM(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) SearchByKBA(w http.ResponseWriter, r *http.Request) {
-	h.respondError(w, http.StatusNotImplemented, "KBA search not implemented yet")
+	h.searchTypeNumber(w, r, "German KBA Number")
 }
 
 // SearchAnalogs resolves only explicit TecDoc IAM crosses. Safe contracts:
@@ -130,8 +141,12 @@ func (h *Handler) SearchAnalogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := clampSearchLimit(getIntParam(r, "limit", defaultSearchLimit))
-	offset := getIntParam(r, "offset", 0)
+	page, err := parsePageParams(r, defaultSearchLimit, maxSearchLimit)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit, offset := page.Limit, page.Offset
 	if offset < 0 {
 		offset = 0
 	}
@@ -164,58 +179,27 @@ func (h *Handler) SearchAnalogs(w http.ResponseWriter, r *http.Request) {
 			h.respondError(w, http.StatusBadRequest, "Invalid supplier_id")
 			return
 		}
-		ids, err := h.queries.FindExactArticleIDsBySupplier(ctx, searchNumber, supplierID, countryID, maxSourceArticleIDs)
+		ids, err := h.queries.FindExactArticleIDsBySupplier(ctx, searchNumber, supplierID, countryID, maxSourceArticleIDs+1)
 		if err != nil {
 			h.respondError(w, http.StatusInternalServerError, "Failed to resolve exact source article: "+err.Error())
 			return
 		}
-		if len(ids) > 1 {
-			h.respondError(w, http.StatusConflict, "Manufacturer and article number resolve to multiple TecDoc articles; use an exact art_id")
+		if len(ids) > maxSourceArticleIDs {
+			h.respondError(w, http.StatusUnprocessableEntity, "Source article resolves to too many TecDoc technical rows; use an exact art_id")
 			return
 		}
+		// Several ART_ID rows can represent one commercial supplier article.
+		// supplier_id + own ArticleNumber already prove the source identity, so
+		// merge their explicit IAM links instead of rejecting short/common numbers.
 		sourceIDs = ids
 	}
 
-	merged := make([]models.SearchResult, 0)
-	seen := make(map[int]struct{})
-	fetchLimit := limit + offset
-	if fetchLimit < limit {
-		fetchLimit = limit
+	results, err := h.queries.SearchAnalogsByArticleIDs(ctx, sourceIDs, languageID, countryID, limit, offset)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to search analogs: "+err.Error())
+		return
 	}
-	for _, sourceID := range sourceIDs {
-		items, err := h.queries.SearchAnalogsByArticleID(ctx, sourceID, languageID, countryID, fetchLimit, 0)
-		if err != nil {
-			h.respondError(w, http.StatusInternalServerError, "Failed to search analogs: "+err.Error())
-			return
-		}
-		for _, item := range items {
-			if _, exists := seen[item.ArticleID]; exists {
-				continue
-			}
-			seen[item.ArticleID] = struct{}{}
-			merged = append(merged, item)
-		}
-	}
-	sort.SliceStable(merged, func(i, j int) bool {
-		if merged[i].Brand != merged[j].Brand {
-			return merged[i].Brand < merged[j].Brand
-		}
-		if merged[i].ArticleNr != merged[j].ArticleNr {
-			return merged[i].ArticleNr < merged[j].ArticleNr
-		}
-		return merged[i].ArticleID < merged[j].ArticleID
-	})
-
-	if offset >= len(merged) {
-		merged = []models.SearchResult{}
-	} else {
-		end := len(merged)
-		if offset+limit < end {
-			end = offset + limit
-		}
-		merged = merged[offset:end]
-	}
-	h.respondJSON(w, http.StatusOK, models.SearchResponse{Results: merged})
+	h.respondJSON(w, http.StatusOK, models.SearchResponse{Results: results})
 }
 
 func (h *Handler) SearchOEMByOEM(w http.ResponseWriter, r *http.Request) {
@@ -225,8 +209,12 @@ func (h *Handler) SearchOEMByOEM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := clampSearchLimit(getIntParam(r, "limit", defaultSearchLimit))
-	offset := getIntParam(r, "offset", 0)
+	page, err := parsePageParams(r, defaultSearchLimit, maxSearchLimit)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit, offset := page.Limit, page.Offset
 
 	ctx, cancel := context.WithTimeout(r.Context(), searchQueryTimeout)
 	defer cancel()

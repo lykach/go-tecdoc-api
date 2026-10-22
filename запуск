@@ -1,0 +1,19 @@
+cd /var/www/go-tecdoc-api
+
+find cmd internal -name '*.go' -print0 | xargs -0 gofmt -w
+
+go test ./...
+go vet ./...
+go build ./...
+
+
+cp -a bin/server "bin/server.backup-$(date +%Y%m%d-%H%M%S)"
+
+go build -trimpath -o bin/server ./cmd/server
+
+systemctl restart go-tecdoc-api
+systemctl --no-pager --full status go-tecdoc-api
+
+
+chmod +x test-api.sh
+./test-api.sh

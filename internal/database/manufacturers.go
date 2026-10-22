@@ -2,25 +2,35 @@ package database
 
 import (
 	"database/sql"
+	"strings"
+
 	"go-tecdoc-api/internal/models"
 )
 
 // GetManufacturers повертає список виробників з фільтрацією
 func (q *Queries) GetManufacturers(vehicleType string, limit, offset int) ([]models.Manufacturer, error) {
+	vehicleType = strings.TrimSpace(vehicleType)
+	availabilityPredicate := "MFA_MODELS_COUNT > 0"
+	if vehicleType == "Engine" {
+		// Engine is a global TecDoc master target. Some manufacturers have
+		// ENGINES rows without ordinary model-series rows, so MFA_MODELS_COUNT
+		// is not a safe availability predicate for Engine imports.
+		availabilityPredicate = "EXISTS (SELECT 1 FROM ENGINES WHERE ENGINES.ENG_MFA_ID = MANUFACTURERS.MFA_ID)"
+	}
 	query := `
-		SELECT 
+		SELECT
 			MFA_ID,
 			MFA_BRAND,
 			MFA_TYPE,
 			MFA_MODELS_COUNT,
 			MFA_SUP_ID
-		FROM 
+		FROM
 			MANUFACTURERS
-		WHERE 
-			FIND_IN_SET(?, MFA_TYPE) > 0 
-			AND MFA_MODELS_COUNT > 0 
-		ORDER BY 
-			MFA_BRAND
+		WHERE
+			FIND_IN_SET(?, MFA_TYPE) > 0
+			AND ` + availabilityPredicate + `
+		ORDER BY
+			MFA_BRAND, MFA_ID
 		LIMIT ? OFFSET ?
 	`
 
@@ -60,15 +70,15 @@ func (q *Queries) GetManufacturers(vehicleType string, limit, offset int) ([]mod
 // GetManufacturerByID повертає детальну інформацію про виробника
 func (q *Queries) GetManufacturerByID(id int) (*models.ManufacturerDetail, error) {
 	query := `
-		SELECT 
+		SELECT
 			MFA_ID,
 			MFA_BRAND,
 			MFA_TYPE,
 			MFA_MODELS_COUNT,
 			MFA_SUP_ID
-		FROM 
+		FROM
 			MANUFACTURERS
-		WHERE 
+		WHERE
 			MFA_ID = ?
 	`
 
@@ -100,14 +110,19 @@ func (q *Queries) GetManufacturerByID(id int) (*models.ManufacturerDetail, error
 
 // CountManufacturers повертає загальну кількість виробників
 func (q *Queries) CountManufacturers(vehicleType string) (int, error) {
+	vehicleType = strings.TrimSpace(vehicleType)
+	availabilityPredicate := "MFA_MODELS_COUNT > 0"
+	if vehicleType == "Engine" {
+		availabilityPredicate = "EXISTS (SELECT 1 FROM ENGINES WHERE ENGINES.ENG_MFA_ID = MANUFACTURERS.MFA_ID)"
+	}
 	query := `
-		SELECT 
+		SELECT
 			COUNT(*)
-		FROM 
+		FROM
 			MANUFACTURERS
-		WHERE 
-			FIND_IN_SET(?, MFA_TYPE) > 0 
-			AND MFA_MODELS_COUNT > 0
+		WHERE
+			FIND_IN_SET(?, MFA_TYPE) > 0
+			AND ` + availabilityPredicate + `
 	`
 
 	var count int

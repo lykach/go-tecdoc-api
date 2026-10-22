@@ -7,17 +7,21 @@ import (
 )
 
 // GetPassengerCars повертає список легкових автомобілів для серії моделі
-func (q *Queries) GetPassengerCars(msID int, languageID int, countryID int, limit, offset int) ([]models.PassengerCar, error) {
+func (q *Queries) GetPassengerCars(msID int, vehicleType string, languageID int, countryID int, limit, offset int) ([]models.PassengerCar, error) {
 	query := `
 		SELECT
 			PASSENGER_CARS.PC_ID,
 			PASSENGER_CARS.PC_MFA_ID,
 			PASSENGER_CARS.PC_MS_ID,
+			PASSENGER_CARS.PC_TYPE,
 			PC_COUNTRY_SPECIFICS.PCS_CI_FROM,
 			PC_COUNTRY_SPECIFICS.PCS_CI_TO,
 			PC_COUNTRY_SPECIFICS.PCS_POWER_KW,
 			PC_COUNTRY_SPECIFICS.PCS_POWER_PS,
 			PC_COUNTRY_SPECIFICS.PCS_CAPACITY_TECH,
+			PC_COUNTRY_SPECIFICS.PCS_CAPACITY_LT,
+			PC_COUNTRY_SPECIFICS.PCS_NUMBER_OF_CYLINDERS,
+			PC_COUNTRY_SPECIFICS.PCS_NUMBER_OF_VALVES,
 			CONCAT_WS(' ',
 				MFA_BRAND,
 				COALESCE(
@@ -106,6 +110,23 @@ func (q *Queries) GetPassengerCars(msID int, languageID int, countryID int, limi
 				 LIMIT 1),
 				''
 			) AS FUEL_TYPE,
+			COALESCE(
+				(SELECT DES_TEXTS.TEX_TEXT
+				 FROM TEXT_DESIGNATIONS
+				 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
+				 WHERE TEXT_DESIGNATIONS.DES_ID = PC_COUNTRY_SPECIFICS.PCS_DRIVE_TYPE
+				   AND TEXT_DESIGNATIONS.DES_LNG_ID = ?
+				 GROUP BY TEXT_DESIGNATIONS.DES_ID
+				 LIMIT 1),
+				(SELECT DES_TEXTS.TEX_TEXT
+				 FROM TEXT_DESIGNATIONS
+				 INNER JOIN DES_TEXTS ON DES_TEXTS.TEX_ID = TEXT_DESIGNATIONS.DES_TEX_ID
+				 WHERE TEXT_DESIGNATIONS.DES_ID = PC_COUNTRY_SPECIFICS.PCS_DRIVE_TYPE
+				   AND TEXT_DESIGNATIONS.DES_LNG_ID = 4
+				 GROUP BY TEXT_DESIGNATIONS.DES_ID
+				 LIMIT 1),
+				''
+			) AS DRIVE_TYPE,
 			(
 				SELECT GROUP_CONCAT(DISTINCT ENGINES.ENG_CODE ORDER BY ENGINES.ENG_CODE SEPARATOR ',')
 				FROM ENGINES
@@ -138,7 +159,10 @@ func (q *Queries) GetPassengerCars(msID int, languageID int, countryID int, limi
 			PASSENGER_CARS
 			INNER JOIN PC_COUNTRY_SPECIFICS
 				ON PC_COUNTRY_SPECIFICS.PCS_PC_ID = PASSENGER_CARS.PC_ID
-				AND (PC_COUNTRY_SPECIFICS.PCS_COU_ID = ? OR PC_COUNTRY_SPECIFICS.PCS_COU_ID = 0)
+				AND PC_COUNTRY_SPECIFICS.PCS_COU_ID = IF(
+					EXISTS (SELECT 1 FROM PC_COUNTRY_SPECIFICS AS PCS_EXACT WHERE PCS_EXACT.PCS_PC_ID = PASSENGER_CARS.PC_ID AND PCS_EXACT.PCS_COU_ID = ?),
+					?, 0
+				)
 			INNER JOIN MODELS_SERIES
 				ON MODELS_SERIES.MS_ID = ?
 			INNER JOIN MANUFACTURERS
@@ -148,15 +172,16 @@ func (q *Queries) GetPassengerCars(msID int, languageID int, countryID int, limi
 				AND MS_COUNTRY_SPECIFICS.MSCS_COU_ID = ?
 		WHERE
 			PASSENGER_CARS.PC_MS_ID = ?
+			AND FIND_IN_SET(?, PASSENGER_CARS.PC_TYPE) > 0
 			AND FIND_IN_SET('PC', MODELS_SERIES.MS_TYPE) > 0
-		ORDER BY TYPE_NAME
+		ORDER BY TYPE_NAME, PASSENGER_CARS.PC_ID
 		LIMIT ? OFFSET ?
 	`
 
 	rows, err := q.db.Query(
 		query,
-		languageID, languageID, languageID, languageID, languageID,
-		countryID, msID, countryID, msID, limit, offset,
+		languageID, languageID, languageID, languageID, languageID, languageID,
+		countryID, countryID, msID, countryID, msID, vehicleType, limit, offset,
 	)
 	if err != nil {
 		return nil, err
@@ -169,7 +194,9 @@ func (q *Queries) GetPassengerCars(msID int, languageID int, countryID int, limi
 		var pc models.PassengerCar
 		var yearFrom, yearTo sql.NullString
 		var powerKW, powerPS sql.NullFloat64
-		var capacity sql.NullFloat64
+		var capacity, capacityLiters sql.NullFloat64
+		var cylinders, valves sql.NullInt64
+		var driveType sql.NullString
 		var engineCodes sql.NullString
 		var enginesJSON sql.NullString
 
@@ -177,15 +204,20 @@ func (q *Queries) GetPassengerCars(msID int, languageID int, countryID int, limi
 			&pc.ID,
 			&pc.MfaID,
 			&pc.MsID,
+			&pc.VehicleType,
 			&yearFrom,
 			&yearTo,
 			&powerKW,
 			&powerPS,
 			&capacity,
+			&capacityLiters,
+			&cylinders,
+			&valves,
 			&pc.TypeName,
 			&pc.BodyType,
 			&pc.EngineType,
 			&pc.FuelType,
+			&driveType,
 			&engineCodes,
 			&enginesJSON,
 		)
@@ -213,6 +245,19 @@ func (q *Queries) GetPassengerCars(msID int, languageID int, countryID int, limi
 		if capacity.Valid {
 			pc.Capacity = int(capacity.Float64)
 		}
+		if capacityLiters.Valid {
+			value := capacityLiters.Float64
+			pc.CapacityLiters = &value
+		}
+		if cylinders.Valid {
+			value := int(cylinders.Int64)
+			pc.Cylinders = &value
+		}
+		if valves.Valid {
+			value := int(valves.Int64)
+			pc.Valves = &value
+		}
+		pc.DriveType = nullString(driveType)
 
 		if engineCodes.Valid && engineCodes.String != "" {
 			pc.EngineCodes = splitCommaSeparated(engineCodes.String)
@@ -233,7 +278,7 @@ func (q *Queries) GetPassengerCars(msID int, languageID int, countryID int, limi
 }
 
 // CountPassengerCars повертає загальну кількість автомобілів для серії моделі
-func (q *Queries) CountPassengerCars(msID int) (int, error) {
+func (q *Queries) CountPassengerCars(msID int, vehicleType string) (int, error) {
 	query := `
 		SELECT
 			COUNT(*)
@@ -242,11 +287,12 @@ func (q *Queries) CountPassengerCars(msID int) (int, error) {
 			INNER JOIN MODELS_SERIES ON MODELS_SERIES.MS_ID = ?
 		WHERE
 			PASSENGER_CARS.PC_MS_ID = ?
+			AND FIND_IN_SET(?, PASSENGER_CARS.PC_TYPE) > 0
 			AND FIND_IN_SET('PC', MODELS_SERIES.MS_TYPE) > 0
 	`
 
 	var count int
-	err := q.db.QueryRow(query, msID, msID).Scan(&count)
+	err := q.db.QueryRow(query, msID, msID, vehicleType).Scan(&count)
 	return count, err
 }
 
@@ -255,6 +301,7 @@ func (q *Queries) GetPassengerCarByID(pcID int, languageID int, countryID int) (
 	query := `
 		SELECT
 			PASSENGER_CARS.PC_ID,
+			PASSENGER_CARS.PC_TYPE,
 			CONCAT_WS(' ',
 				MFA_BRAND,
 				COALESCE(
@@ -379,7 +426,10 @@ func (q *Queries) GetPassengerCarByID(pcID int, languageID int, countryID int) (
 			PASSENGER_CARS
 			INNER JOIN PC_COUNTRY_SPECIFICS
 				ON PC_COUNTRY_SPECIFICS.PCS_PC_ID = PASSENGER_CARS.PC_ID
-				AND (PC_COUNTRY_SPECIFICS.PCS_COU_ID = ? OR PC_COUNTRY_SPECIFICS.PCS_COU_ID = 0)
+				AND PC_COUNTRY_SPECIFICS.PCS_COU_ID = IF(
+					EXISTS (SELECT 1 FROM PC_COUNTRY_SPECIFICS AS PCS_EXACT WHERE PCS_EXACT.PCS_PC_ID = PASSENGER_CARS.PC_ID AND PCS_EXACT.PCS_COU_ID = ?),
+					?, 0
+				)
 			INNER JOIN MODELS_SERIES
 				ON MODELS_SERIES.MS_ID = PASSENGER_CARS.PC_MS_ID
 			INNER JOIN MANUFACTURERS
@@ -404,9 +454,10 @@ func (q *Queries) GetPassengerCarByID(pcID int, languageID int, countryID int) (
 		query,
 		languageID, languageID, languageID,
 		languageID, languageID, languageID, languageID, languageID,
-		countryID, countryID, pcID,
+		countryID, countryID, countryID, pcID,
 	).Scan(
 		&vd.ID,
+		&vd.VehicleType,
 		&vd.TypeName,
 		&vd.Manufacturer,
 		&vd.ModelSeries,

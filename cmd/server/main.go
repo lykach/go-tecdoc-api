@@ -69,70 +69,9 @@ func main() {
 	// API v1 routes
 	api := router.PathPrefix("/api/v1").Subrouter()
 	api.Use(auth.NewAPIKeyMiddleware(queries).Middleware)
+	api.Use(h.ValidateCommonQueryMiddleware)
 
-	// Localization routes
-	api.HandleFunc("/languages", h.GetLanguages).Methods("GET")
-	api.HandleFunc("/languages/{id}", h.GetLanguageByID).Methods("GET")
-	api.HandleFunc("/countries", h.GetCountries).Methods("GET")
-	api.HandleFunc("/countries/{id}", h.GetCountryByID).Methods("GET")
-
-	// Suppliers routes
-	api.HandleFunc("/suppliers", h.GetSuppliers).Methods("GET")
-	api.HandleFunc("/suppliers/{id}", h.GetSupplierByID).Methods("GET")
-	api.HandleFunc("/suppliers/{id}/products", h.GetSupplierProducts).Methods("GET")
-
-	// Manufacturers routes
-	api.HandleFunc("/manufacturers", h.GetManufacturers).Methods("GET")
-	api.HandleFunc("/manufacturers/{id}", h.GetManufacturerByID).Methods("GET")
-
-	// Model series routes
-	api.HandleFunc("/manufacturers/{id}/models", h.GetModelSeries).Methods("GET")
-	api.HandleFunc("/models/{id}", h.GetModelSeriesDetails).Methods("GET")
-
-	// Commercial Vehicles
-	api.HandleFunc("/models/{id}/cv", h.GetCommercialVehicles).Methods("GET")
-	api.HandleFunc("/cv/{id}", h.GetCommercialVehicleDetails).Methods("GET")
-
-	// Motorcycles
-	api.HandleFunc("/models/{id}/mc", h.GetMotorcycles).Methods("GET")
-	api.HandleFunc("/mc/{id}", h.GetMotorcycleDetails).Methods("GET")
-
-	// Passenger cars routes
-	api.HandleFunc("/models/{id}/cars", h.GetPassengerCars).Methods("GET")
-	api.HandleFunc("/cars/{id}", h.GetCarDetails).Methods("GET")
-	api.HandleFunc("/cars/{id}/product-groups", h.GetCarProductGroups).Methods("GET")
-
-	// Engine details
-	api.HandleFunc("/engines/{id}", h.GetEngineDetails).Methods("GET")
-
-	// Articles routes
-	api.HandleFunc("/articles/search", h.SearchArticles).Methods("GET")
-	api.HandleFunc("/articles/{id}", h.GetArticleDetails).Methods("GET")
-	api.HandleFunc("/articles/{id}/applicability", h.GetArticleApplicability).Methods("GET")
-	api.HandleFunc("/articles/{id}/cross-references", h.GetArticleCrossReferences).Methods("GET")
-	api.HandleFunc("/articles/{id}/media", h.GetArticleMedia).Methods("GET")
-	api.HandleFunc("/articles/{id}/components", h.GetArticleComponents).Methods("GET")
-	api.HandleFunc("/articles/{id}/accessories", h.GetArticleAccessories).Methods("GET")
-	api.HandleFunc("/articles/{id}/oem", h.GetArticleOEMNumbers).Methods("GET")
-	api.HandleFunc("/articles/{id}/coordinates", h.GetArticleCoordinates).Methods("GET")
-	api.HandleFunc("/articles/{id}/criteria", h.GetArticleCriteria).Methods("GET")
-
-	// Product groups routes
-	api.HandleFunc("/product-groups", h.GetProductGroups).Methods("GET")
-	api.HandleFunc("/product-groups/{id}/children", h.GetCategoryChildren).Methods("GET")
-	api.HandleFunc("/product-groups/{id}/articles", h.GetProductGroupArticles).Methods("GET")
-
-	// Search routes
-	api.HandleFunc("/search/kba", h.SearchByKBA).Methods("GET")
-	api.HandleFunc("/search/article", h.SearchArticleByNumber).Methods("GET")
-	api.HandleFunc("/search/article-exact", h.SearchExactArticleByNumber).Methods("GET")
-	// NOTE: this used to also register h.SearchArticles on the same path+method
-	// as the line above. gorilla/mux matches exact routes in registration
-	// order, so the second registration was silently unreachable dead code -
-	// removed. h.SearchArticles is still live on its own path, /articles/search.
-	api.HandleFunc("/search/oem", h.SearchByOEM).Methods("GET")
-	api.HandleFunc("/search/analog", h.SearchAnalogs).Methods("GET")
-	api.HandleFunc("/search/oem-oem", h.SearchOEMByOEM).Methods("GET")
+	registerAPIRoutes(api, h)
 
 	// Health check - actually pings the database instead of assuming it is
 	// still reachable, so orchestrators (k8s/Docker) can detect a dead DB
@@ -158,7 +97,6 @@ func main() {
 	// ALLOWED_ORIGINS lets deployments restrict origins explicitly when the
 	// storefront/admin call this API directly from the browser.
 	allowedOrigins := []string{"*"}
-	allowCredentials := false
 	if raw := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS")); raw != "" {
 		allowedOrigins = nil
 		for _, origin := range strings.Split(raw, ",") {
@@ -167,13 +105,12 @@ func main() {
 				allowedOrigins = append(allowedOrigins, origin)
 			}
 		}
-		allowCredentials = true
 	}
 	corsHandler := cors.New(cors.Options{
 		AllowedOrigins:   allowedOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Content-Type", "Authorization", "X-API-Key"},
-		AllowCredentials: allowCredentials,
+		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type", "X-API-Key"},
+		AllowCredentials: false,
 		MaxAge:           300,
 	})
 
@@ -206,44 +143,11 @@ func main() {
 	log.Printf("🚀 Server starting on http://%s", address)
 	log.Printf("📚 API documentation: http://%s/api/v1", address)
 	log.Printf("💚 Health check: http://%s/health", address)
-	log.Println("\n📋 Available endpoints:")
-	log.Println("   GET /api/v1/languages")
-	log.Println("   GET /api/v1/languages/{id}")
-	log.Println("   GET /api/v1/countries")
-	log.Println("   GET /api/v1/countries/{id}")
-	log.Println("   GET /api/v1/suppliers")
-	log.Println("   GET /api/v1/suppliers/{id}")
-	log.Println("   GET /api/v1/suppliers?brand=BOSCH")
-	log.Println("   GET /api/v1/suppliers/{id}/products")
-	log.Println("   GET /api/v1/manufacturers")
-	log.Println("   GET /api/v1/manufacturers/{id}")
-	log.Println("   GET /api/v1/manufacturers/{id}/models")
-	log.Println("   GET /api/v1/models/{id}")
-	log.Println("   GET /api/v1/models/{id}/cars")
-	log.Println("   GET /api/v1/cars/{id}")
-	log.Println("   GET /api/v1/cars/{id}/product-groups")
-	log.Println("   GET /api/v1/models/{id}/cv")
-	log.Println("   GET /api/v1/cv/{id}")
-	log.Println("   GET /api/v1/models/{id}/mc")
-	log.Println("   GET /api/v1/mc/{id}")
-	log.Println("   GET /api/v1/engines/{id}")
-	log.Println("   GET /api/v1/articles/search?number=...")
-	log.Println("   GET /api/v1/articles/{id}")
-	log.Println("   GET /api/v1/articles/{id}/cross-references")
-	log.Println("   GET /api/v1/articles/{id}/media")
-	log.Println("   GET /api/v1/articles/{id}/components")
-	log.Println("   GET /api/v1/articles/{id}/accessories")
-	log.Println("   GET /api/v1/articles/{id}/oem")
-	log.Println("   GET /api/v1/articles/{id}/coordinates")
-	log.Println("   GET /api/v1/articles/{id}/criteria")
-	log.Println("   GET /api/v1/search/article")
-	log.Println("   GET /api/v1/search/oem")
-	log.Println("   GET /api/v1/search/oem-oem")
-	log.Println("   GET /api/v1/search/kba (not implemented)")
-	log.Println("   GET /api/v1/search/analog")
-	log.Println("   GET /api/v1/product-groups")
-	log.Println("   GET /api/v1/product-groups/{id}/children")
-	log.Println("   GET /api/v1/product-groups/{id}/articles?car_id=...")
+	log.Println("\n📋 API groups: localization, suppliers, vehicles, articles, catalog, search, enrichment, datasets, exports")
+	log.Println("   Discovery: GET /api/v1")
+	log.Println("   KBA:       GET /api/v1/search/kba?number=...")
+	log.Println("   Datasets:  GET /api/v1/datasets")
+	log.Println("   Reference: API_REFERENCE.md / OPENAPI.yaml")
 
 	// Run the server in the background and shut it down gracefully on
 	// SIGINT/SIGTERM so in-flight requests finish instead of being dropped

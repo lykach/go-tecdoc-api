@@ -18,3 +18,9 @@ func normalizeSearchNumber(value string) string {
 	}
 	return result.String()
 }
+
+// NormalizeSearchNumber exposes the same canonicalization used by TecDoc
+// lookups to server-side batch orchestration without duplicating rules.
+func NormalizeSearchNumber(value string) string {
+	return normalizeSearchNumber(value)
+}

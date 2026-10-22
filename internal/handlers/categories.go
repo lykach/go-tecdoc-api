@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -8,19 +9,50 @@ import (
 	"go-tecdoc-api/internal/models"
 )
 
+func normalizeProductGroupTreeType(raw string) (string, error) {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "PC", "LCV", "E-PC", "E-LCV":
+		return "PC", nil
+	case "CV":
+		return "CV", nil
+	case "MOTORCYCLE", "MC", "MTB":
+		return "Motorcycle", nil
+	case "ENGINE", "ENGINES":
+		return "Engine", nil
+	case "AXLE", "AXLES":
+		return "Axle", nil
+	case "UNIVERSAL", "UNIVERSAL PARTS", "UNIVERSAL_PARTS":
+		return "Universal Parts", nil
+	default:
+		return "", errInvalidQueryParameterWithMessage("vehicle_type must resolve to one of PC, CV, Motorcycle, Engine, Axle, Universal Parts")
+	}
+}
+
+func normalizeVehicleProductGroupTargetType(raw string) (string, error) {
+	targetType, err := normalizeProductGroupTreeType(raw)
+	if err != nil {
+		return "", err
+	}
+	if targetType != "PC" && targetType != "CV" && targetType != "Motorcycle" {
+		return "", errInvalidQueryParameterWithMessage("vehicle_type must resolve to one of PC, CV, Motorcycle")
+	}
+	return targetType, nil
+}
+
 // GetProductGroups - отримати список категорій запчастин (корені дерева)
 func (h *Handler) GetProductGroups(w http.ResponseWriter, r *http.Request) {
-	vehicleType := getStringParam(r, "vehicle_type", "PC")
-	limit := getIntParam(r, "limit", 100)
-	offset := getIntParam(r, "offset", 0)
+	vehicleType, err := normalizeProductGroupTreeType(getStringParam(r, "vehicle_type", "PC"))
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	page, err := parsePageParams(r, 100, 500)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit, offset := page.Limit, page.Offset
 	languageID := h.getLanguageID(r)
-
-	if limit > 500 {
-		limit = 500
-	}
-	if limit < 1 {
-		limit = 100
-	}
 
 	categories, err := h.queries.GetProductGroups(vehicleType, languageID, limit, offset)
 	if err != nil {
@@ -43,7 +75,11 @@ func (h *Handler) GetCategoryChildren(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	vehicleType := getStringParam(r, "vehicle_type", "PC")
+	vehicleType, err := normalizeProductGroupTreeType(getStringParam(r, "vehicle_type", "PC"))
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	languageID := h.getLanguageID(r)
 
 	categories, err := h.queries.GetCategoryChildren(parentID, vehicleType, languageID)
@@ -67,17 +103,18 @@ func (h *Handler) GetCarProductGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	vehicleType := getStringParam(r, "vehicle_type", "PC")
-	limit := getIntParam(r, "limit", 100)
-	offset := getIntParam(r, "offset", 0)
+	vehicleType, err := normalizeVehicleProductGroupTargetType(getStringParam(r, "vehicle_type", "PC"))
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	page, err := parsePageParams(r, 100, 500)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit, offset := page.Limit, page.Offset
 	languageID := h.getLanguageID(r)
-
-	if limit > 500 {
-		limit = 500
-	}
-	if limit < 1 {
-		limit = 100
-	}
 
 	categories, err := h.queries.GetCarProductGroups(pcID, vehicleType, languageID, limit, offset)
 	if err != nil {
@@ -100,24 +137,25 @@ func (h *Handler) GetProductGroupArticles(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	pcID := getIntParam(r, "car_id", 0)
-	if pcID == 0 {
-		h.respondError(w, http.StatusBadRequest, "car_id parameter is required")
+	pcID, err := parsePositiveQueryInt(r, "car_id", 0)
+	if err != nil || pcID <= 0 {
+		h.respondError(w, http.StatusBadRequest, "car_id parameter is required and must be a positive integer")
 		return
 	}
 
-	vehicleType := getStringParam(r, "vehicle_type", "PC")
-	limit := getIntParam(r, "limit", 50)
-	offset := getIntParam(r, "offset", 0)
+	vehicleType, err := normalizeVehicleProductGroupTargetType(getStringParam(r, "vehicle_type", "PC"))
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	page, err := parsePageParams(r, 50, 500)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit, offset := page.Limit, page.Offset
 	languageID := h.getLanguageID(r)
 	countryID := h.getCountryID(r)
-
-	if limit > 500 {
-		limit = 500
-	}
-	if limit < 1 {
-		limit = 50
-	}
 
 	// Перевіряємо чи є фільтри по критеріям
 	criteriaStr := r.URL.Query().Get("criteria")
@@ -125,9 +163,13 @@ func (h *Handler) GetProductGroupArticles(w http.ResponseWriter, r *http.Request
 
 	if criteriaStr != "" {
 		// Використовуємо фільтрацію за критеріями
-		criteriaFilters := parseCriteriaFilters(criteriaStr)
+		criteriaFilters, parseErr := parseCriteriaFilters(criteriaStr)
+		if parseErr != nil {
+			h.respondError(w, http.StatusBadRequest, parseErr.Error())
+			return
+		}
 		articles, err = h.queries.GetProductGroupArticlesWithCriteria(
-			strID, pcID, languageID, countryID,
+			strID, pcID, vehicleType, languageID, countryID,
 			criteriaFilters, limit, offset,
 		)
 	} else {
@@ -160,22 +202,32 @@ func (h *Handler) GetProductGroupArticles(w http.ResponseWriter, r *http.Request
 	h.respondJSON(w, http.StatusOK, response)
 }
 
-// parseCriteriaFilters парсить criteria фільтри з формату "6:12,92:9"
-func parseCriteriaFilters(criteriaStr string) map[int]string {
+// parseCriteriaFilters parses criteria filters from "6:12,92:9". Malformed
+// filters are rejected instead of being silently ignored, because silently
+// dropping a restriction can turn a narrow catalogue query into a broad one.
+func parseCriteriaFilters(criteriaStr string) (map[int]string, error) {
 	filters := make(map[int]string)
+	criteriaStr = strings.TrimSpace(criteriaStr)
 	if criteriaStr == "" {
-		return filters
+		return filters, nil
 	}
 
 	pairs := strings.Split(criteriaStr, ",")
 	for _, pair := range pairs {
-		parts := strings.Split(pair, ":")
-		if len(parts) == 2 {
-			criID, err := strconv.Atoi(strings.TrimSpace(parts[0]))
-			if err == nil {
-				filters[criID] = strings.TrimSpace(parts[1])
-			}
+		pair = strings.TrimSpace(pair)
+		parts := strings.SplitN(pair, ":", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid criteria filter %q; expected CRITERIA_ID:value", pair)
 		}
+		criID, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+		if err != nil || criID <= 0 {
+			return nil, fmt.Errorf("invalid criteria id in filter %q", pair)
+		}
+		value := strings.TrimSpace(parts[1])
+		if value == "" {
+			return nil, fmt.Errorf("criteria value must not be empty for id %d", criID)
+		}
+		filters[criID] = value
 	}
-	return filters
+	return filters, nil
 }

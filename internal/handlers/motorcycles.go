@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"net/http"
 	"go-tecdoc-api/internal/models"
+	"net/http"
 )
 
 // GetMotorcycles повертає список мотоциклів для серії моделі
@@ -13,8 +13,12 @@ func (h *Handler) GetMotorcycles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := getIntParam(r, "limit", 50)
-	offset := getIntParam(r, "offset", 0)
+	page, err := parsePageParams(r, 50, 500)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit, offset := page.Limit, page.Offset
 	languageID := h.getLanguageID(r)
 	countryID := h.getCountryID(r)
 
@@ -24,36 +28,43 @@ func (h *Handler) GetMotorcycles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	total, _ := h.queries.CountMotorcycles(msID)
+	total, err := h.queries.CountMotorcycles(msID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to count motorcycles")
+		return
+	}
 
 	h.respondJSON(w, http.StatusOK, models.MotorcyclesResponse{
 		Motorcycles: motorcycles,
 		Total:       total,
+		Limit:       limit,
+		Offset:      offset,
 	})
 }
+
 // GetMotorcycleDetails повертає детальну інформацію про мотоцикл
 func (h *Handler) GetMotorcycleDetails(w http.ResponseWriter, r *http.Request) {
-mtbID, err := getPathInt(r, "id")
-if err != nil {
-h.respondError(w, http.StatusBadRequest, "Invalid motorcycle ID")
-return
-}
+	mtbID, err := getPathInt(r, "id")
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, "Invalid motorcycle ID")
+		return
+	}
 
-languageID := h.getLanguageID(r)
-countryID := h.getCountryID(r)
+	languageID := h.getLanguageID(r)
+	countryID := h.getCountryID(r)
 
-vehicleDetail, err := h.queries.GetMotorcycleByID(mtbID, languageID, countryID)
-if err != nil {
-h.respondError(w, http.StatusInternalServerError, "Failed to fetch motorcycle details")
-return
-}
+	vehicleDetail, err := h.queries.GetMotorcycleByID(mtbID, languageID, countryID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to fetch motorcycle details")
+		return
+	}
 
-if vehicleDetail == nil {
-h.respondError(w, http.StatusNotFound, "Motorcycle not found")
-return
-}
+	if vehicleDetail == nil {
+		h.respondError(w, http.StatusNotFound, "Motorcycle not found")
+		return
+	}
 
-h.respondJSON(w, http.StatusOK, models.VehicleDetailResponse{
-Vehicle: *vehicleDetail,
-})
+	h.respondJSON(w, http.StatusOK, models.VehicleDetailResponse{
+		Vehicle: *vehicleDetail,
+	})
 }

@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"net/http"
 	"go-tecdoc-api/internal/models"
+	"net/http"
 )
 
 // GetModelSeries - отримати серії моделей для виробника
@@ -15,18 +15,14 @@ func (h *Handler) GetModelSeries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	vehicleType := getStringParam(r, "vehicle_type", "PC")
-	limit := getIntParam(r, "limit", 100)
-	offset := getIntParam(r, "offset", 0)
+	page, err := parsePageParams(r, 100, 500)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit, offset := page.Limit, page.Offset
 	languageID := h.getLanguageID(r)
 	countryID := h.getCountryID(r)
-
-	// Валідація
-	if limit > 500 {
-		limit = 500
-	}
-	if limit < 1 {
-		limit = 100
-	}
 
 	modelSeries, err := h.queries.GetModelSeries(mfaID, vehicleType, languageID, countryID, limit, offset)
 	if err != nil {

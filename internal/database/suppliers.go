@@ -18,20 +18,20 @@ func (q *Queries) GetSuppliers(page, limit int) ([]models.Supplier, int, error) 
 
 	// Запит списку постачальників
 	query := `
-		SELECT 
+		SELECT
 			SUP_ID,
 			SUP_BRAND,
 			SUP_FULL_NAME,
 			SUP_LOGO_NAME,
-			(SELECT SUPLG_LOGO_NAME 
-			 FROM SUPPLIERS_LOGOS 
-			 WHERE SUPLG_SUP_ID = SUPPLIERS.SUP_ID 
-			   AND SUPLG_COU_ID = 0 
+			(SELECT SUPLG_LOGO_NAME
+			 FROM SUPPLIERS_LOGOS
+			 WHERE SUPLG_SUP_ID = SUPPLIERS.SUP_ID
+			   AND SUPLG_COU_ID = 0
 			 LIMIT 1) AS WEBP_LOGO
-		FROM 
+		FROM
 			SUPPLIERS
-		ORDER BY 
-			SUP_BRAND
+		ORDER BY
+			SUP_BRAND, SUP_ID
 		LIMIT ? OFFSET ?
 	`
 
@@ -70,19 +70,19 @@ func (q *Queries) GetSuppliers(page, limit int) ([]models.Supplier, int, error) 
 // GetSupplierByID повертає деталі постачальника за ID
 func (q *Queries) GetSupplierByID(id int) (*models.Supplier, error) {
 	query := `
-		SELECT 
+		SELECT
 			SUP_ID,
 			SUP_BRAND,
 			SUP_FULL_NAME,
 			SUP_LOGO_NAME,
-			(SELECT SUPLG_LOGO_NAME 
-			 FROM SUPPLIERS_LOGOS 
-			 WHERE SUPLG_SUP_ID = SUPPLIERS.SUP_ID 
-			   AND SUPLG_COU_ID = 0 
+			(SELECT SUPLG_LOGO_NAME
+			 FROM SUPPLIERS_LOGOS
+			 WHERE SUPLG_SUP_ID = SUPPLIERS.SUP_ID
+			   AND SUPLG_COU_ID = 0
 			 LIMIT 1) AS WEBP_LOGO
-		FROM 
+		FROM
 			SUPPLIERS
-		WHERE 
+		WHERE
 			SUP_ID = ?
 	`
 
@@ -110,22 +110,22 @@ func (q *Queries) GetSupplierByID(id int) (*models.Supplier, error) {
 // SearchSuppliersByBrand пошук постачальників за назвою бренду
 func (q *Queries) SearchSuppliersByBrand(brand string, limit int) ([]models.Supplier, error) {
 	query := `
-		SELECT 
+		SELECT
 			SUP_ID,
 			SUP_BRAND,
 			SUP_FULL_NAME,
 			SUP_LOGO_NAME,
-			(SELECT SUPLG_LOGO_NAME 
-			 FROM SUPPLIERS_LOGOS 
-			 WHERE SUPLG_SUP_ID = SUPPLIERS.SUP_ID 
-			   AND SUPLG_COU_ID = 0 
+			(SELECT SUPLG_LOGO_NAME
+			 FROM SUPPLIERS_LOGOS
+			 WHERE SUPLG_SUP_ID = SUPPLIERS.SUP_ID
+			   AND SUPLG_COU_ID = 0
 			 LIMIT 1) AS WEBP_LOGO
-		FROM 
+		FROM
 			SUPPLIERS
-		WHERE 
+		WHERE
 			SUP_BRAND LIKE ?
-		ORDER BY 
-			SUP_BRAND
+		ORDER BY
+			SUP_BRAND, SUP_ID
 		LIMIT ?
 	`
 
@@ -160,59 +160,60 @@ func (q *Queries) SearchSuppliersByBrand(brand string, limit int) ([]models.Supp
 
 	return suppliers, rows.Err()
 }
+
 // GetSupplierProducts повертає товарні групи для постачальника
 func (q *Queries) GetSupplierProducts(supplierID int, languageID int, limit, offset int) ([]models.SupplierProduct, error) {
-query := `
+	query := `
 SELECT DISTINCT
 PRODUCTS.PT_ID,
 (` + BuildGetTextSubquery("PRODUCTS.PT_DES_ID", languageID) + `) AS PRODUCT_NAME,
 COUNT(DISTINCT LINK_ART_PT.LAP_ART_ID) AS ARTICLES_COUNT
-FROM 
+FROM
 LINK_ART_PT
 INNER JOIN PRODUCTS ON PRODUCTS.PT_ID = LINK_ART_PT.LAP_PT_ID
-WHERE 
+WHERE
 LINK_ART_PT.LAP_SUP_ID = ?
-GROUP BY 
+GROUP BY
 PRODUCTS.PT_ID, PRODUCT_NAME
-ORDER BY 
-ARTICLES_COUNT DESC
+ORDER BY
+ARTICLES_COUNT DESC, PRODUCTS.PT_ID
 LIMIT ? OFFSET ?
 `
 
-rows, err := q.db.Query(query, supplierID, limit, offset)
-if err != nil {
-return nil, err
-}
-defer rows.Close()
+	rows, err := q.db.Query(query, supplierID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-var products []models.SupplierProduct
-for rows.Next() {
-var sp models.SupplierProduct
+	var products []models.SupplierProduct
+	for rows.Next() {
+		var sp models.SupplierProduct
 
-err := rows.Scan(
-&sp.ProductID,
-&sp.ProductName,
-&sp.ArticlesCount,
-)
-if err != nil {
-return nil, err
-}
+		err := rows.Scan(
+			&sp.ProductID,
+			&sp.ProductName,
+			&sp.ArticlesCount,
+		)
+		if err != nil {
+			return nil, err
+		}
 
-products = append(products, sp)
-}
+		products = append(products, sp)
+	}
 
-return products, rows.Err()
+	return products, rows.Err()
 }
 
 // CountSupplierProducts підраховує кількість товарних груп для постачальника
 func (q *Queries) CountSupplierProducts(supplierID int) (int, error) {
-query := `
+	query := `
 SELECT COUNT(DISTINCT LINK_ART_PT.LAP_PT_ID)
 FROM LINK_ART_PT
 WHERE LINK_ART_PT.LAP_SUP_ID = ?
 `
 
-var count int
-err := q.db.QueryRow(query, supplierID).Scan(&count)
-return count, err
+	var count int
+	err := q.db.QueryRow(query, supplierID).Scan(&count)
+	return count, err
 }

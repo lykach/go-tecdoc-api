@@ -2,8 +2,15 @@ package handlers
 
 import (
 	"context"
-	"go-tecdoc-api/internal/models"
 	"net/http"
+	"strings"
+
+	"go-tecdoc-api/internal/models"
+)
+
+const (
+	defaultArticleApplicabilityLimit = 100
+	maxArticleApplicabilityLimit     = 500
 )
 
 // SearchArticles - пошук запчастин за номером
@@ -15,8 +22,12 @@ func (h *Handler) SearchArticles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := clampSearchLimit(getIntParam(r, "limit", defaultSearchLimit))
-	offset := getIntParam(r, "offset", 0)
+	page, err := parsePageParams(r, defaultSearchLimit, maxSearchLimit)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit, offset := page.Limit, page.Offset
 	languageID := h.getLanguageID(r)
 	countryID := h.getCountryID(r)
 
@@ -47,8 +58,15 @@ func (h *Handler) GetArticleDetails(w http.ResponseWriter, r *http.Request) {
 
 	languageID := h.getLanguageID(r)
 	countryID := h.getCountryID(r)
+	relatedLimit, err := parsePositiveQueryInt(r, "related_limit", 50)
+	if err != nil || relatedLimit > 100 {
+		h.respondError(w, http.StatusBadRequest, "related_limit must be an integer between 1 and 100")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), searchQueryTimeout)
+	defer cancel()
 
-	articleDetail, err := h.queries.GetArticleByID(artID, languageID, countryID)
+	articleDetail, err := h.queries.GetArticleByID(ctx, artID, languageID, countryID, relatedLimit)
 	if err != nil {
 		h.respondError(w, http.StatusInternalServerError, "Failed to fetch article details: "+err.Error())
 		return
@@ -107,26 +125,64 @@ func (h *Handler) GetArticleCrossReferences(w http.ResponseWriter, r *http.Reque
 	h.respondJSON(w, http.StatusOK, response)
 }
 
-// GetArticleApplicability повертає список автомобілів для запчастини
+// GetArticleApplicability keeps the legacy detailed PC list and adds a
+// normalized, paged linkage view for PC/CV/Motorcycle/Engine/Axle targets.
 func (h *Handler) GetArticleApplicability(w http.ResponseWriter, r *http.Request) {
 	id, err := getPathInt(r, "id")
-	if err != nil {
+	if err != nil || id <= 0 {
 		h.respondError(w, http.StatusBadRequest, "Invalid article ID")
 		return
 	}
 
 	langID := h.getLanguageID(r)
 	countryID := h.getCountryID(r)
-
-	applicabilities, err := h.queries.GetArticleApplicability(id, langID, countryID)
+	targetType := strings.TrimSpace(getStringParam(r, "target_type", ""))
+	if targetType != "" && !isSupportedApplicabilityTargetType(targetType) {
+		h.respondError(w, http.StatusBadRequest, "Invalid target_type; allowed: PC, CV, Motorcycle, Engine, Axle")
+		return
+	}
+	pageParams, err := parsePageParams(r, defaultArticleApplicabilityLimit, maxArticleApplicabilityLimit)
 	if err != nil {
-		h.respondError(w, http.StatusInternalServerError, "Failed to fetch applicability")
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit, offset := pageParams.Limit, pageParams.Offset
+
+	ctx, cancel := context.WithTimeout(r.Context(), searchQueryTimeout)
+	defer cancel()
+
+	vehicles := make([]models.Applicability, 0)
+	legacyHasMore := false
+	// Backward compatibility: old clients received passenger-car details under
+	// "vehicles". It is now bounded by the same page parameters as linkages so
+	// a single article cannot produce an unbounded legacy payload.
+	if targetType == "" || targetType == "PC" {
+		vehicles, legacyHasMore, err = h.queries.GetArticleApplicability(ctx, id, langID, countryID, limit, offset)
+		if err != nil {
+			h.respondError(w, http.StatusInternalServerError, "Failed to fetch legacy passenger-car applicability: "+err.Error())
+			return
+		}
+	}
+
+	page, err := h.queries.GetArticleApplicabilityLinkagesPage(ctx, id, langID, countryID, targetType, limit, offset)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to fetch structured applicability: "+err.Error())
 		return
 	}
 
 	h.respondJSON(w, http.StatusOK, map[string]interface{}{
-		"vehicles": applicabilities,
-		"total":    len(applicabilities),
+		"vehicles":            vehicles,
+		"total":               len(vehicles),
+		"legacy_returned":     len(vehicles),
+		"legacy_has_more":     legacyHasMore,
+		"linkages":            page.Linkages,
+		"total_targets":       page.TotalTargets,
+		"returned_targets":    page.Returned,
+		"truncated":           page.Truncated,
+		"total_targets_exact": page.TotalTargetsExact,
+		"limit":               limit,
+		"offset":              offset,
+		"target_type":         targetType,
 	})
 }
 
@@ -140,7 +196,7 @@ func (h *Handler) GetArticleMedia(w http.ResponseWriter, r *http.Request) {
 
 	langID := h.getLanguageID(r)
 
-	mediaList, err := h.queries.GetArticleMedia(id, langID)
+	mediaList, err := h.queries.GetArticleMedia(id, langID, h.getCountryID(r))
 	if err != nil {
 		h.respondError(w, http.StatusInternalServerError, "Failed to fetch media")
 		return
@@ -199,23 +255,32 @@ func (h *Handler) GetArticleComponents(w http.ResponseWriter, r *http.Request) {
 // GetArticleAccessories повертає список аксесуарів запчастини
 func (h *Handler) GetArticleAccessories(w http.ResponseWriter, r *http.Request) {
 	id, err := getPathInt(r, "id")
-	if err != nil {
+	if err != nil || id <= 0 {
 		h.respondError(w, http.StatusBadRequest, "Invalid article ID")
 		return
 	}
-
-	langID := h.getLanguageID(r)
-	countryID := h.getCountryID(r)
-
-	accessories, err := h.queries.GetArticleAccessories(id, langID, countryID)
+	page, err := parsePageParams(r, 100, 500)
 	if err != nil {
-		h.respondError(w, http.StatusInternalServerError, "Failed to fetch accessories")
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), searchQueryTimeout)
+	defer cancel()
+	accessories, total, err := h.queries.GetArticleAccessoriesPage(ctx, id, h.getLanguageID(r), h.getCountryID(r), page.Limit, page.Offset)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to fetch accessories: "+err.Error())
 		return
 	}
 
 	h.respondJSON(w, http.StatusOK, map[string]interface{}{
-		"accessories": accessories,
-		"total":       len(accessories),
+		"accessories":       accessories,
+		"total":             total,
+		"limit":             page.Limit,
+		"offset":            page.Offset,
+		"returned":          len(accessories),
+		"has_more":          page.Offset+len(accessories) < total,
+		"criteria_included": true,
 	})
 }
 
@@ -259,24 +324,70 @@ func (h *Handler) GetArticleCoordinates(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// GetArticleCriteria повертає критерії (характеристики) запчастини
+// GetArticleCriteria returns storefront-visible criteria by default. The
+// enrichment worker can request the full TecDoc criterion set with
+// include_hidden=true while preserving the legacy response fields.
 func (h *Handler) GetArticleCriteria(w http.ResponseWriter, r *http.Request) {
 	articleID, err := getPathInt(r, "id")
-	if err != nil {
+	if err != nil || articleID <= 0 {
 		h.respondError(w, http.StatusBadRequest, "Invalid article ID")
 		return
 	}
 
 	languageID := h.getLanguageID(r)
-
-	criteria, err := h.queries.GetArticleCriteria(articleID, languageID)
+	countryID := h.getCountryID(r)
+	includeHidden, err := parseBoolQuery(r, "include_hidden", false)
 	if err != nil {
-		h.respondError(w, http.StatusInternalServerError, "Failed to fetch article criteria")
+		h.respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), searchQueryTimeout)
+	defer cancel()
+
+	criteria, err := h.queries.GetArticleCriteria(ctx, articleID, languageID, countryID, includeHidden)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to fetch article criteria: "+err.Error())
 		return
 	}
 
 	h.respondJSON(w, http.StatusOK, models.ArticleCriteriaResponse{
 		Criteria: criteria,
 		Total:    len(criteria),
+	})
+}
+
+// GetArticleClassification returns the raw TecDoc article -> Product Type ->
+// Search Tree relation plus linkage evidence. It deliberately does not choose
+// one category for the caller.
+func (h *Handler) GetArticleClassification(w http.ResponseWriter, r *http.Request) {
+	articleID, err := getPathInt(r, "id")
+	if err != nil || articleID <= 0 {
+		h.respondError(w, http.StatusBadRequest, "Invalid article ID")
+		return
+	}
+	languageID := h.getLanguageID(r)
+	countryID := h.getCountryID(r)
+	ctx, cancel := context.WithTimeout(r.Context(), searchQueryTimeout)
+	defer cancel()
+
+	exists, err := h.queries.ArticleExistsForCountry(ctx, articleID, countryID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to validate article: "+err.Error())
+		return
+	}
+	if !exists {
+		h.respondError(w, http.StatusNotFound, "Article not found in the requested country context")
+		return
+	}
+
+	items, err := h.queries.GetArticleClassification(ctx, articleID, languageID, countryID)
+	if err != nil {
+		h.respondError(w, http.StatusInternalServerError, "Failed to fetch article classification: "+err.Error())
+		return
+	}
+	h.respondJSON(w, http.StatusOK, models.ArticleClassificationResponse{
+		ArticleID:    articleID,
+		ProductTypes: items,
+		Total:        len(items),
 	})
 }

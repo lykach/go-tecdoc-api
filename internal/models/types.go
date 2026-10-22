@@ -48,24 +48,30 @@ type ModelDetail struct {
 // ============== Vehicles ==============
 
 type PassengerCar struct {
-	ID          int      `json:"id" db:"PC_ID"`
-	MfaID       int      `json:"mfa_id" db:"PC_MFA_ID"`
-	MsID        int      `json:"ms_id" db:"PC_MS_ID"`
-	TypeName    string   `json:"type_name"`
-	YearFrom    int      `json:"year_from"`
-	YearTo      int      `json:"year_to"`
-	PowerKW     int      `json:"power_kw"`
-	PowerHP     int      `json:"power_hp"`
-	Capacity    int      `json:"capacity"`
-	FuelType    string   `json:"fuel_type"`
-	BodyType    string   `json:"body_type"`
-	EngineType  string   `json:"engine_type"`
-	EngineCodes []string `json:"engine_codes"`
-	Engines     []Engine `json:"engines"`
+	ID             int      `json:"id" db:"PC_ID"`
+	MfaID          int      `json:"mfa_id" db:"PC_MFA_ID"`
+	MsID           int      `json:"ms_id" db:"PC_MS_ID"`
+	VehicleType    string   `json:"vehicle_type" db:"PC_TYPE"`
+	TypeName       string   `json:"type_name"`
+	YearFrom       int      `json:"year_from"`
+	YearTo         int      `json:"year_to"`
+	PowerKW        int      `json:"power_kw"`
+	PowerHP        int      `json:"power_hp"`
+	Capacity       int      `json:"capacity"`
+	CapacityLiters *float64 `json:"capacity_liters,omitempty"`
+	Cylinders      *int     `json:"cylinders,omitempty"`
+	Valves         *int     `json:"valves,omitempty"`
+	FuelType       string   `json:"fuel_type"`
+	BodyType       string   `json:"body_type"`
+	EngineType     string   `json:"engine_type"`
+	DriveType      string   `json:"drive_type"`
+	EngineCodes    []string `json:"engine_codes"`
+	Engines        []Engine `json:"engines"`
 }
 
 type VehicleDetail struct {
 	ID           int                    `json:"id"`
+	VehicleType  string                 `json:"vehicle_type,omitempty"`
 	TypeName     string                 `json:"type_name"`
 	Manufacturer string                 `json:"manufacturer"`
 	ModelSeries  string                 `json:"model_series"`
@@ -93,6 +99,21 @@ type Category struct {
 	Children []Category `json:"children,omitempty"`
 }
 
+// VehicleProductGroups groups applicable root SEARCH_TREE nodes by TecDoc vehicle ID.
+// It is used by the server-to-server importer to avoid one HTTP request per vehicle.
+type VehicleProductGroups struct {
+	VehicleID  int        `json:"vehicle_id"`
+	Categories []Category `json:"categories"`
+}
+
+// VehicleProductGroupIDs is the compact importer representation used when
+// callers only need canonical SEARCH_TREE identities. It avoids translation
+// and metadata work during large vehicle synchronizations.
+type VehicleProductGroupIDs struct {
+	VehicleID   int   `json:"vehicle_id"`
+	CategoryIDs []int `json:"category_ids"`
+}
+
 type Product struct {
 	ID          int    `json:"id" db:"PT_ID"`
 	Name        string `json:"name"`
@@ -114,26 +135,30 @@ type Article struct {
 }
 
 type ArticleDetail struct {
-	ID           int                `json:"id"`
-	ArticleNr    string             `json:"article_nr"`
-	Brand        string             `json:"brand"`
-	SupplierID   int                `json:"supplier_id"`
-	Name         string             `json:"name"`
-	Description  string             `json:"description"`
-	Info         string             `json:"info,omitempty"`
-	PackUnit     *int               `json:"pack_unit,omitempty"`
-	Quantity     *int               `json:"quantity_per_unit,omitempty"`
-	Status       string             `json:"status"`
-	StatusDate   *string            `json:"status_date,omitempty"`
-	Criteria     map[string]string  `json:"criteria"`
-	OEMNumbers   []string           `json:"oem_numbers"`
-	EANNumbers   []string           `json:"ean_numbers"`
-	Superseded   []string           `json:"superseded"`
-	SupersededBy []string           `json:"superseded_by"`
-	Images       []ArticleMedia     `json:"images"`
-	Documents    []ArticleMedia     `json:"documents"`
-	PartsList    []ArticlePart      `json:"parts_list,omitempty"`
-	Accessories  []ArticleAccessory `json:"accessories,omitempty"`
+	ID                   int                `json:"id"`
+	ArticleNr            string             `json:"article_nr"`
+	Brand                string             `json:"brand"`
+	SupplierID           int                `json:"supplier_id"`
+	Name                 string             `json:"name"`
+	Description          string             `json:"description"`
+	Info                 string             `json:"info,omitempty"`
+	PackUnit             *int               `json:"pack_unit,omitempty"`
+	Quantity             *int               `json:"quantity_per_unit,omitempty"`
+	Status               string             `json:"status"`
+	StatusDate           *string            `json:"status_date,omitempty"`
+	Criteria             map[string]string  `json:"criteria"`
+	CriteriaDetails      []ArticleCriterion `json:"criteria_details,omitempty"`
+	OEMNumbers           []string           `json:"oem_numbers"`
+	EANNumbers           []string           `json:"ean_numbers"`
+	Superseded           []string           `json:"superseded"`
+	SupersededBy         []string           `json:"superseded_by"`
+	Images               []ArticleMedia     `json:"images"`
+	Documents            []ArticleMedia     `json:"documents"`
+	PartsList            []ArticlePart      `json:"parts_list,omitempty"`
+	Accessories          []ArticleAccessory `json:"accessories,omitempty"`
+	AccessoriesTotal     int                `json:"accessories_total"`
+	AccessoriesReturned  int                `json:"accessories_returned"`
+	AccessoriesTruncated bool               `json:"accessories_truncated"`
 }
 
 type ArticleMedia struct {
@@ -143,41 +168,58 @@ type ArticleMedia struct {
 }
 
 type ArticlePart struct {
-	ArticleNr string `json:"article_nr"`
-	Brand     string `json:"brand"`
-	Name      string `json:"name"`
-	Quantity  int    `json:"quantity"`
-	Order     int    `json:"order"`
+	ArticleID     int    `json:"article_id"`
+	ArticleNr     string `json:"article_nr"`
+	SupplierID    int    `json:"supplier_id"`
+	Brand         string `json:"brand"`
+	Name          string `json:"name"`
+	Quantity      int    `json:"quantity"`
+	Order         int    `json:"order"`
+	ProductTypeID int    `json:"product_type_id"`
 }
 
 type ArticleAccessory struct {
-	ArticleID int               `json:"article_id"`
-	ArticleNr string            `json:"article_nr"`
-	Brand     string            `json:"brand"`
-	Name      string            `json:"name"`
-	GroupName string            `json:"group_name"`
-	Criteria  map[string]string `json:"criteria,omitempty"`
+	SourceArticleIDs []int              `json:"source_article_ids,omitempty"`
+	ArticleID        int                `json:"article_id"`
+	ArticleNr        string             `json:"article_nr"`
+	SupplierID       int                `json:"supplier_id"`
+	Brand            string             `json:"brand"`
+	Name             string             `json:"name"`
+	GroupName        string             `json:"group_name"`
+	RelationType     string             `json:"relation_type,omitempty"`
+	RelationTypeID   int                `json:"relation_type_id,omitempty"`
+	Quantity         int                `json:"quantity,omitempty"`
+	ProductTypeID    int                `json:"product_type_id,omitempty"`
+	Sort             int                `json:"sort,omitempty"`
+	Criteria         map[string]string  `json:"criteria,omitempty"` // Backward-compatible flattened view.
+	CriteriaDetails  []ArticleCriterion `json:"criteria_details,omitempty"`
 }
 
 // ============== Cross References ==============
 
 type CrossReference struct {
-	ArticleID *int   `json:"article_id"`
-	ArticleNr string `json:"article_nr"`
-	Brand     string `json:"brand"`
-	Name      string `json:"name"`
-	Type      string `json:"type"` // OEM, IAM, ArticleNumber
+	SourceArticleIDs []int  `json:"source_article_ids,omitempty"`
+	ArticleID        *int   `json:"article_id"`
+	ArticleNr        string `json:"article_nr"`
+	Brand            string `json:"brand"` // Backward-compatible resolved supplier/manufacturer name.
+	SupplierID       *int   `json:"supplier_id,omitempty"`
+	Supplier         string `json:"supplier,omitempty"`
+	ManufacturerID   *int   `json:"manufacturer_id,omitempty"`
+	Manufacturer     string `json:"manufacturer,omitempty"`
+	Name             string `json:"name"`
+	Type             string `json:"type"` // OEM, IAM, ArticleNumber
 }
 
 // ============== Search ==============
 
 type SearchResult struct {
-	ArticleID  int    `json:"article_id"`
-	ArticleNr  string `json:"article_nr"`
-	Brand      string `json:"brand"`
-	SupplierID int    `json:"supplier_id"`
-	Name       string `json:"name"`
-	FoundVia   string `json:"found_via"`
+	ArticleID    int    `json:"article_id"`
+	ArticleNr    string `json:"article_nr"`
+	Brand        string `json:"brand"`
+	SupplierID   int    `json:"supplier_id"`
+	Name         string `json:"name"`
+	FoundVia     string `json:"found_via"`               // Lookup path: ArticleNumber, IAMNumber, OENumber, EAN.
+	RelationType string `json:"relation_type,omitempty"` // Entity returned by this row; search results are supplier articles.
 }
 
 // ============== Applicability ==============
@@ -256,9 +298,12 @@ type ApplicabilityResponse struct {
 // ============== OEM Numbers ==============
 
 type OEMNumber struct {
-	Number  string `json:"number"`
-	Brand   string `json:"brand"`
-	BrandID int    `json:"brand_id"`
+	SourceArticleIDs []int  `json:"source_article_ids,omitempty"`
+	Number           string `json:"number"`
+	Brand            string `json:"brand"`    // Backward-compatible alias for manufacturer.
+	BrandID          int    `json:"brand_id"` // Backward-compatible alias for manufacturer_id.
+	Manufacturer     string `json:"manufacturer"`
+	ManufacturerID   int    `json:"manufacturer_id"`
 }
 
 type OEMNumbersResponse struct {
@@ -282,43 +327,55 @@ type CommercialVehicle struct {
 	EngineType   string   `json:"engine_type"`
 	PlatformType string   `json:"platform_type"`
 	EngineCodes  []string `json:"engine_codes"`
+	Engines      []Engine `json:"engines"`
 }
 
 type CommercialVehiclesResponse struct {
 	Vehicles []CommercialVehicle `json:"vehicles"`
 	Total    int                 `json:"total"`
+	Limit    int                 `json:"limit"`
+	Offset   int                 `json:"offset"`
 }
 
 // ============== Motorcycles ==============
 
 type Motorcycle struct {
-	ID          int      `json:"id"`
-	MfaID       int      `json:"mfa_id"`
-	MsID        int      `json:"ms_id"`
-	TypeName    string   `json:"type_name"`
-	YearFrom    int      `json:"year_from"`
-	YearTo      int      `json:"year_to"`
-	PowerKW     int      `json:"power_kw"`
-	PowerHP     int      `json:"power_hp"`
-	Capacity    int      `json:"capacity"`
-	EngineType  string   `json:"engine_type"`
-	FuelType    string   `json:"fuel_type"`
-	Type        string   `json:"type"`
-	EngineCodes []string `json:"engine_codes"`
+	ID             int      `json:"id"`
+	MfaID          int      `json:"mfa_id"`
+	MsID           int      `json:"ms_id"`
+	TypeName       string   `json:"type_name"`
+	YearFrom       int      `json:"year_from"`
+	YearTo         int      `json:"year_to"`
+	PowerKW        int      `json:"power_kw"`
+	PowerHP        int      `json:"power_hp"`
+	Capacity       int      `json:"capacity"`
+	CapacityLiters *float64 `json:"capacity_liters,omitempty"`
+	Cylinders      *int     `json:"cylinders,omitempty"`
+	Valves         *int     `json:"valves,omitempty"`
+	EngineType     string   `json:"engine_type"`
+	FuelType       string   `json:"fuel_type"`
+	DriveType      string   `json:"drive_type"`
+	Type           string   `json:"type"`
+	EngineCodes    []string `json:"engine_codes"`
+	Engines        []Engine `json:"engines"`
 }
 
 // Add this missing struct:
 type MotorcyclesResponse struct {
 	Motorcycles []Motorcycle `json:"motorcycles"`
 	Total       int          `json:"total"`
+	Limit       int          `json:"limit"`
+	Offset      int          `json:"offset"`
 }
 
 // ============== OEM Cross References ==============
 
 type OEMCrossReference struct {
-	ArticleID   int    `json:"article_id"`
-	CrossBrand  string `json:"cross_brand"`
-	CrossNumber string `json:"cross_number"`
+	ArticleID      int    `json:"article_id"`
+	CrossBrand     string `json:"cross_brand"` // Backward-compatible alias for manufacturer.
+	CrossNumber    string `json:"cross_number"`
+	ManufacturerID int    `json:"manufacturer_id"`
+	Manufacturer   string `json:"manufacturer"`
 }
 
 type OEMCrossReferenceResponse struct {
@@ -339,6 +396,13 @@ type EngineDetail struct {
 
 type EngineDetailResponse struct {
 	Engine EngineDetail `json:"engine"`
+}
+
+type EngineListResponse struct {
+	Engines []EngineDetail `json:"engines"`
+	Total   int            `json:"total"`
+	Limit   int            `json:"limit"`
+	Offset  int            `json:"offset"`
 }
 
 // ============== Article Coordinates ==============
@@ -364,12 +428,17 @@ type ArticleCoordinatesResponse struct {
 // ============== Article Criteria ==============
 
 type ArticleCriterion struct {
-	CriteriaID       int    `json:"criteria_id"`
-	Name             string `json:"name"`
-	ShortName        string `json:"short_name"`
-	Value            string `json:"value"`
-	ValueDescription string `json:"value_description,omitempty"`
-	Type             string `json:"type"` // Numerical, Alphanumerical, KeyValue
+	SourceArticleIDs   []int  `json:"source_article_ids,omitempty"`
+	CriteriaID         int    `json:"criteria_id"`
+	Name               string `json:"name"`
+	ShortName          string `json:"short_name"`
+	Value              string `json:"value"` // Backward-compatible alias of RawValue.
+	RawValue           string `json:"raw_value"`
+	ValueDescriptionID int    `json:"value_description_id,omitempty"`
+	ValueDescription   string `json:"value_description,omitempty"`
+	Unit               string `json:"unit,omitempty"`
+	Type               string `json:"type"` // Numerical, Alphanumerical, KeyValue, Date, NoValue, Interval, Boolean.
+	Display            bool   `json:"display"`
 }
 
 type ArticleCriteriaResponse struct {
@@ -388,4 +457,6 @@ type SupplierProduct struct {
 type SupplierProductsResponse struct {
 	Products []SupplierProduct `json:"products"`
 	Total    int               `json:"total"`
+	Limit    int               `json:"limit"`
+	Offset   int               `json:"offset"`
 }
