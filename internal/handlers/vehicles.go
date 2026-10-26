@@ -41,7 +41,7 @@ func (h *Handler) GetPassengerCars(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Отримати загальну кількість
-	total, err := h.queries.CountPassengerCars(msID, vehicleType)
+	total, err := h.queries.CountPassengerCars(msID, vehicleType, countryID)
 	if err != nil {
 		h.respondError(w, http.StatusInternalServerError, "Failed to count passenger cars: "+err.Error())
 		return

@@ -160,10 +160,12 @@ func (h *Handler) GetProductGroupArticles(w http.ResponseWriter, r *http.Request
 	// Перевіряємо чи є фільтри по критеріям
 	criteriaStr := r.URL.Query().Get("criteria")
 	var articles []models.Article
+	var criteriaFilters map[int]string
 
 	if criteriaStr != "" {
 		// Використовуємо фільтрацію за критеріями
-		criteriaFilters, parseErr := parseCriteriaFilters(criteriaStr)
+		var parseErr error
+		criteriaFilters, parseErr = parseCriteriaFilters(criteriaStr)
 		if parseErr != nil {
 			h.respondError(w, http.StatusBadRequest, parseErr.Error())
 			return
@@ -186,7 +188,7 @@ func (h *Handler) GetProductGroupArticles(w http.ResponseWriter, r *http.Request
 	}
 
 	// Отримати загальну кількість
-	total, err := h.queries.CountProductGroupArticles(strID, pcID, vehicleType)
+	total, err := h.queries.CountProductGroupArticles(strID, pcID, vehicleType, countryID, criteriaFilters)
 	if err != nil {
 		h.respondError(w, http.StatusInternalServerError, "Failed to count articles: "+err.Error())
 		return

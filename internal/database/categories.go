@@ -2,7 +2,6 @@ package database
 
 import (
 	"database/sql"
-	"fmt"
 	"sort"
 
 	"go-tecdoc-api/internal/models"
@@ -171,163 +170,80 @@ func (q *Queries) GetCarProductGroups(pcID int, vehicleType string, languageID i
 	return categories, rows.Err()
 }
 
-// GetProductGroupArticles - отримати запчастини для категорії та автомобіля
-func (q *Queries) GetProductGroupArticles(strID int, pcID int, vehicleType string, languageID int, countryID int, limit, offset int) ([]models.Article, error) {
-	query := `
-		SELECT DISTINCT
-			ARTICLES.ART_ID,
-			ARTICLES.ART_ARTICLE_NR,
-			ARTICLES.ART_SUP_BRAND,
-			ARTICLES.ART_SUP_ID,
-			CONCAT_WS(' ',
-				(` + BuildGetTextSubquery("ARTICLES.ART_COMPLETE_DES_ID", languageID) + `),
-				(` + BuildGetTextSubquery("ARTICLES.ART_DES_ID", languageID) + `)
-			) AS ART_PRODUCT_NAME,
-			(` + BuildGetTextSubquery("ART_COUNTRY_SPECIFICS.ACS_STATUS_DES_ID", languageID) + `) AS ART_STATUS
-		FROM
-			SEARCH_TREE
-			INNER JOIN LINK_PT_STR ON LINK_PT_STR.STR_ID = SEARCH_TREE.STR_ID
-				AND FIND_IN_SET(?, LINK_PT_STR.STR_TYPE) > 0
-			INNER JOIN LINK_LA_TYP ON LINK_LA_TYP.LAT_TYP_ID = ?
-				AND LINK_LA_TYP.LAT_TYPE = ?
-				AND LINK_LA_TYP.LAT_PT_ID = LINK_PT_STR.PT_ID
-			INNER JOIN LINK_ART ON LINK_ART.LA_ID = LINK_LA_TYP.LAT_LA_ID
-				AND LINK_ART.LA_PT_ID = LINK_LA_TYP.LAT_PT_ID
-			INNER JOIN ARTICLES ON ARTICLES.ART_ID = LINK_ART.LA_ART_ID
-			LEFT OUTER JOIN ART_COUNTRY_SPECIFICS ON ART_COUNTRY_SPECIFICS.ACS_ART_ID = ARTICLES.ART_ID
-				AND (ART_COUNTRY_SPECIFICS.ACS_COU_ID = ? OR ART_COUNTRY_SPECIFICS.ACS_COU_ID = 0)
-		WHERE
-			SEARCH_TREE.STR_ID = ?
-			AND FIND_IN_SET(?, SEARCH_TREE.STR_TYPE) > 0
-		ORDER BY ARTICLES.ART_SUP_BRAND, ARTICLES.ART_ARTICLE_NR, ARTICLES.ART_ID
-		LIMIT ? OFFSET ?
-	`
-
-	rows, err := q.db.Query(query, vehicleType, pcID, vehicleType, countryID, strID, vehicleType, limit, offset)
-	if err != nil {
-		return nil, err
+// productGroupArticleScope keeps list and count on the same vehicle, country
+// and criterion boundary. CTM values identify restriction sets, not bit masks.
+func productGroupArticleScope(strID, carID int, vehicleType string, countryID int, criteria map[int]string) (string, []interface{}) {
+	scope := `
+        FROM SEARCH_TREE
+        INNER JOIN LINK_PT_STR ON LINK_PT_STR.STR_ID = SEARCH_TREE.STR_ID
+            AND FIND_IN_SET(?, LINK_PT_STR.STR_TYPE) > 0
+        INNER JOIN LINK_LA_TYP ON LINK_LA_TYP.LAT_TYP_ID = ?
+            AND LINK_LA_TYP.LAT_TYPE = ?
+            AND LINK_LA_TYP.LAT_PT_ID = LINK_PT_STR.PT_ID
+        INNER JOIN LINK_ART ON LINK_ART.LA_ID = LINK_LA_TYP.LAT_LA_ID
+            AND LINK_ART.LA_PT_ID = LINK_LA_TYP.LAT_PT_ID
+        INNER JOIN ARTICLES ON ARTICLES.ART_ID = LINK_ART.LA_ART_ID
+        LEFT JOIN ART_COUNTRY_SPECIFICS ON ART_COUNTRY_SPECIFICS.ACS_ART_ID = ARTICLES.ART_ID
+            AND ART_COUNTRY_SPECIFICS.ACS_COU_ID = IF(
+                EXISTS (SELECT 1 FROM ART_COUNTRY_SPECIFICS AS ACS_EXACT
+                    WHERE ACS_EXACT.ACS_ART_ID = ARTICLES.ART_ID AND ACS_EXACT.ACS_COU_ID = ?), ?, 0)
+        WHERE SEARCH_TREE.STR_ID = ?
+            AND FIND_IN_SET(?, SEARCH_TREE.STR_TYPE) > 0
+            AND (ARTICLES.ART_CTM = 0 OR EXISTS (SELECT 1 FROM COUNTRY_RESTRICTIONS
+                WHERE CNTR_CTM_ID = ARTICLES.ART_CTM AND CNTR_COU_ID = ?))
+            AND (LINK_ART.LA_CTM = 0 OR EXISTS (SELECT 1 FROM COUNTRY_RESTRICTIONS
+                WHERE CNTR_CTM_ID = LINK_ART.LA_CTM AND CNTR_COU_ID = ?))
+            AND (LINK_LA_TYP.LAT_CTM = 0 OR EXISTS (SELECT 1 FROM COUNTRY_RESTRICTIONS
+                WHERE CNTR_CTM_ID = LINK_LA_TYP.LAT_CTM AND CNTR_COU_ID = ?))
+    `
+	args := []interface{}{vehicleType, carID, vehicleType, countryID, countryID, strID, vehicleType, countryID, countryID, countryID}
+	criterionIDs := make([]int, 0, len(criteria))
+	for id := range criteria {
+		criterionIDs = append(criterionIDs, id)
 	}
-	defer rows.Close()
-
-	var articles []models.Article
-	for rows.Next() {
-		var art models.Article
-
-		err := rows.Scan(
-			&art.ID,
-			&art.ArticleNr,
-			&art.Brand,
-			&art.SupplierID,
-			&art.Name,
-			&art.Status,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		articles = append(articles, art)
+	sort.Ints(criterionIDs)
+	for _, id := range criterionIDs {
+		scope += ` AND EXISTS (SELECT 1 FROM ARTICLE_CRITERIA
+            WHERE ARTICLE_CRITERIA.ACR_ART_ID = ARTICLES.ART_ID
+                AND ARTICLE_CRITERIA.ACR_CRI_ID = ? AND ARTICLE_CRITERIA.ACR_VALUE = ?
+                AND (ARTICLE_CRITERIA.ACR_CTM = 0 OR EXISTS (SELECT 1 FROM COUNTRY_RESTRICTIONS
+                    WHERE CNTR_CTM_ID = ARTICLE_CRITERIA.ACR_CTM AND CNTR_COU_ID = ?)))`
+		args = append(args, id, criteria[id], countryID)
 	}
-
-	return articles, rows.Err()
+	return scope, args
 }
 
-// CountProductGroupArticles - підрахунок запчастин для категорії
-func (q *Queries) CountProductGroupArticles(strID int, pcID int, vehicleType string) (int, error) {
-	query := `
-		SELECT COUNT(DISTINCT ARTICLES.ART_ID)
-		FROM
-			SEARCH_TREE
-			INNER JOIN LINK_PT_STR ON LINK_PT_STR.STR_ID = SEARCH_TREE.STR_ID
-				AND FIND_IN_SET(?, LINK_PT_STR.STR_TYPE) > 0
-			INNER JOIN LINK_LA_TYP ON LINK_LA_TYP.LAT_TYP_ID = ?
-				AND LINK_LA_TYP.LAT_TYPE = ?
-				AND LINK_LA_TYP.LAT_PT_ID = LINK_PT_STR.PT_ID
-			INNER JOIN LINK_ART ON LINK_ART.LA_ID = LINK_LA_TYP.LAT_LA_ID
-				AND LINK_ART.LA_PT_ID = LINK_LA_TYP.LAT_PT_ID
-			INNER JOIN ARTICLES ON ARTICLES.ART_ID = LINK_ART.LA_ART_ID
-		WHERE
-			SEARCH_TREE.STR_ID = ?
-			AND FIND_IN_SET(?, SEARCH_TREE.STR_TYPE) > 0
-	`
+func (q *Queries) GetProductGroupArticles(strID, carID int, vehicleType string, languageID, countryID, limit, offset int) ([]models.Article, error) {
+	return q.GetProductGroupArticlesWithCriteria(strID, carID, vehicleType, languageID, countryID, nil, limit, offset)
+}
 
+func (q *Queries) CountProductGroupArticles(strID, carID int, vehicleType string, countryID int, criteria map[int]string) (int, error) {
+	scope, args := productGroupArticleScope(strID, carID, vehicleType, countryID, criteria)
 	var count int
-	err := q.db.QueryRow(query, vehicleType, pcID, vehicleType, strID, vehicleType).Scan(&count)
+	err := q.db.QueryRow("SELECT COUNT(DISTINCT ARTICLES.ART_ID) "+scope, args...).Scan(&count)
 	return count, err
 }
 
-// GetProductGroupArticlesWithCriteria returns vehicle/category articles with
-// parameterized criterion filters. Values and criterion IDs are never
-// interpolated into SQL.
-func (q *Queries) GetProductGroupArticlesWithCriteria(productGroupID int, carID int, vehicleType string, languageID int, countryID int, criteriaFilters map[int]string, limit, offset int) ([]models.Article, error) {
-	baseQuery := `
-		SELECT DISTINCT
-			ARTICLES.ART_ID,
-			ARTICLES.ART_ARTICLE_NR,
-			ARTICLES.ART_SUP_BRAND,
-			CONCAT_WS(' ',
-				(` + BuildGetTextSubquery("ARTICLES.ART_COMPLETE_DES_ID", languageID) + `),
-				(` + BuildGetTextSubquery("ARTICLES.ART_DES_ID", languageID) + `)
-			) AS ART_PRODUCT_NAME
-		FROM ARTICLES
-		INNER JOIN LINK_ART ON LINK_ART.LA_ART_ID = ARTICLES.ART_ID
-	`
-
-	args := make([]interface{}, 0, 8+len(criteriaFilters)*2)
-	if carID > 0 {
-		baseQuery += `
-			INNER JOIN LINK_LA_TYP ON LINK_LA_TYP.LAT_LA_ID = LINK_ART.LA_ID
-				AND LINK_LA_TYP.LAT_PT_ID = LINK_ART.LA_PT_ID
-				AND LINK_LA_TYP.LAT_TYP_ID = ?
-				AND LINK_LA_TYP.LAT_TYPE = ?
-		`
-		args = append(args, carID, vehicleType)
-	}
-
-	baseQuery += `
-		INNER JOIN LINK_PT_STR ON LINK_PT_STR.PT_ID = LINK_ART.LA_PT_ID
-			AND LINK_PT_STR.STR_ID = ?
-			AND FIND_IN_SET(?, LINK_PT_STR.STR_TYPE) > 0
-	`
-	args = append(args, productGroupID, vehicleType)
-
-	criterionIDs := make([]int, 0, len(criteriaFilters))
-	for criterionID := range criteriaFilters {
-		criterionIDs = append(criterionIDs, criterionID)
-	}
-	sort.Ints(criterionIDs)
-	for index, criterionID := range criterionIDs {
-		baseQuery += fmt.Sprintf(`
-			INNER JOIN ARTICLE_CRITERIA AS AC%d ON AC%d.ACR_ART_ID = ARTICLES.ART_ID
-				AND AC%d.ACR_CRI_ID = ?
-		`, index, index, index)
-		args = append(args, criterionID)
-	}
-
-	baseQuery += `
-		WHERE (ARTICLES.ART_CTM = 0 OR ARTICLES.ART_CTM & (SELECT COU_CTM FROM COUNTRIES WHERE COU_ID = ?) > 0)
-	`
-	args = append(args, countryID)
-	for index, criterionID := range criterionIDs {
-		baseQuery += fmt.Sprintf(" AND AC%d.ACR_VALUE = ?", index)
-		args = append(args, criteriaFilters[criterionID])
-	}
-
-	baseQuery += `
-		ORDER BY ARTICLES.ART_SUP_BRAND, ARTICLES.ART_ARTICLE_NR, ARTICLES.ART_ID
-		LIMIT ? OFFSET ?
-	`
+// GetProductGroupArticlesWithCriteria preserves the full Article contract and
+// binds every criterion value. Linkage-only criteria are not global attributes.
+func (q *Queries) GetProductGroupArticlesWithCriteria(strID, carID int, vehicleType string, languageID, countryID int, criteria map[int]string, limit, offset int) ([]models.Article, error) {
+	scope, args := productGroupArticleScope(strID, carID, vehicleType, countryID, criteria)
+	query := `SELECT DISTINCT ARTICLES.ART_ID, ARTICLES.ART_ARTICLE_NR,
+        ARTICLES.ART_SUP_BRAND, ARTICLES.ART_SUP_ID,
+        CONCAT_WS(' ', (` + BuildGetTextSubquery("ARTICLES.ART_COMPLETE_DES_ID", languageID) + `),
+            (` + BuildGetTextSubquery("ARTICLES.ART_DES_ID", languageID) + `)) AS ART_PRODUCT_NAME,
+        (` + BuildGetTextSubquery("ART_COUNTRY_SPECIFICS.ACS_STATUS_DES_ID", languageID) + `) AS ART_STATUS
+        ` + scope + ` ORDER BY ARTICLES.ART_SUP_BRAND, ARTICLES.ART_ARTICLE_NR, ARTICLES.ART_ID LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
-
-	rows, err := q.db.Query(baseQuery, args...)
+	rows, err := q.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
 	articles := make([]models.Article, 0)
 	for rows.Next() {
 		var article models.Article
-		if err := rows.Scan(&article.ID, &article.ArticleNr, &article.Brand, &article.Name); err != nil {
+		if err := rows.Scan(&article.ID, &article.ArticleNr, &article.Brand, &article.SupplierID, &article.Name, &article.Status); err != nil {
 			return nil, err
 		}
 		articles = append(articles, article)

@@ -160,7 +160,7 @@ func (q *Queries) GetMotorcycles(msID int, languageID int, countryID int, limit,
 }
 
 // CountMotorcycles повертає кількість мотоциклів для серії моделі
-func (q *Queries) CountMotorcycles(msID int) (int, error) {
+func (q *Queries) CountMotorcycles(msID, countryID int) (int, error) {
 	query := `
 		SELECT
 			COUNT(*)
@@ -170,10 +170,12 @@ func (q *Queries) CountMotorcycles(msID int) (int, error) {
 		WHERE
 			MOTORBIKES.MTB_MS_ID = ?
 			AND FIND_IN_SET('Motorcycle', MODELS_SERIES.MS_TYPE) > 0
+			AND EXISTS (SELECT 1 FROM MTB_COUNTRY_SPECIFICS
+				WHERE MCS_MTB_ID = MOTORBIKES.MTB_ID AND MCS_COU_ID IN (?, 0))
 	`
 
 	var count int
-	err := q.db.QueryRow(query, msID, msID).Scan(&count)
+	err := q.db.QueryRow(query, msID, msID, countryID).Scan(&count)
 	return count, err
 }
 

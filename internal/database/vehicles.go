@@ -278,7 +278,7 @@ func (q *Queries) GetPassengerCars(msID int, vehicleType string, languageID int,
 }
 
 // CountPassengerCars повертає загальну кількість автомобілів для серії моделі
-func (q *Queries) CountPassengerCars(msID int, vehicleType string) (int, error) {
+func (q *Queries) CountPassengerCars(msID int, vehicleType string, countryID int) (int, error) {
 	query := `
 		SELECT
 			COUNT(*)
@@ -289,10 +289,12 @@ func (q *Queries) CountPassengerCars(msID int, vehicleType string) (int, error) 
 			PASSENGER_CARS.PC_MS_ID = ?
 			AND FIND_IN_SET(?, PASSENGER_CARS.PC_TYPE) > 0
 			AND FIND_IN_SET('PC', MODELS_SERIES.MS_TYPE) > 0
+			AND EXISTS (SELECT 1 FROM PC_COUNTRY_SPECIFICS
+				WHERE PCS_PC_ID = PASSENGER_CARS.PC_ID AND PCS_COU_ID IN (?, 0))
 	`
 
 	var count int
-	err := q.db.QueryRow(query, msID, msID, vehicleType).Scan(&count)
+	err := q.db.QueryRow(query, msID, msID, vehicleType, countryID).Scan(&count)
 	return count, err
 }
 

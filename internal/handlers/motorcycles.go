@@ -28,7 +28,7 @@ func (h *Handler) GetMotorcycles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	total, err := h.queries.CountMotorcycles(msID)
+	total, err := h.queries.CountMotorcycles(msID, countryID)
 	if err != nil {
 		h.respondError(w, http.StatusInternalServerError, "Failed to count motorcycles")
 		return

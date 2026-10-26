@@ -72,6 +72,12 @@ func openCountryRestrictionTestDB(t *testing.T) *sql.DB {
 func TestArticleCountryQueriesPreserveUnrestrictedCTM(t *testing.T) {
 	ctx := context.Background()
 	queries := &Queries{db: openCountryRestrictionTestDB(t)}
+	if _, err := queries.GetProductGroupArticles(100480, 214, "PC", 48, 258, 10, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.GetProductGroupArticlesWithCriteria(100480, 214, "PC", 48, 258, map[int]string{6: "12"}, 10, 0); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := queries.SearchArticlesByNumber(ctx, "1900", 48, 258, 20, 0); err != nil {
 		t.Fatal(err)

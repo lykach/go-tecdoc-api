@@ -345,10 +345,10 @@ func (*criteriaFilterTestConn) QueryContext(_ context.Context, query string, arg
 	if strings.Contains(query, attack) {
 		return nil, errors.New("criterion value was interpolated into SQL")
 	}
-	if !strings.Contains(query, "AC0.ACR_VALUE = ?") || !strings.Contains(query, "AC0.ACR_CRI_ID = ?") {
+	if !strings.Contains(query, "ARTICLE_CRITERIA.ACR_VALUE = ?") || !strings.Contains(query, "ARTICLE_CRITERIA.ACR_CRI_ID = ?") {
 		return nil, errors.New("criterion filters are not parameterized")
 	}
-	if !strings.Contains(query, "LINK_LA_TYP.LAT_PT_ID = LINK_ART.LA_PT_ID") {
+	if !strings.Contains(query, "LINK_ART.LA_PT_ID = LINK_LA_TYP.LAT_PT_ID") {
 		return nil, errors.New("vehicle linkage missing PT_ID guard")
 	}
 	foundAttack := false
@@ -365,8 +365,8 @@ func (*criteriaFilterTestConn) QueryContext(_ context.Context, query string, arg
 		return nil, errors.New("expected bound values missing")
 	}
 	return &staticRows{
-		columns: []string{"ART_ID", "ARTICLE_NR", "BRAND", "NAME"},
-		rows:    [][]driver.Value{{int64(1), "A1", "TEST", "Test item"}},
+		columns: []string{"ART_ID", "ARTICLE_NR", "BRAND", "SUP_ID", "NAME", "STATUS"},
+		rows:    [][]driver.Value{{int64(1), "A1", "TEST", int64(10), "Test item", "Available"}},
 	}, nil
 }
 

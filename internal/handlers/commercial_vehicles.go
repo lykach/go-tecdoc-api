@@ -28,7 +28,7 @@ func (h *Handler) GetCommercialVehicles(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	total, err := h.queries.CountCommercialVehicles(msID)
+	total, err := h.queries.CountCommercialVehicles(msID, countryID)
 	if err != nil {
 		h.respondError(w, http.StatusInternalServerError, "Failed to count commercial vehicles")
 		return

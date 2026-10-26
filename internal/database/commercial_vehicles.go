@@ -140,7 +140,7 @@ func (q *Queries) GetCommercialVehicles(msID int, languageID int, countryID int,
 }
 
 // CountCommercialVehicles повертає кількість вантажівок для серії моделі
-func (q *Queries) CountCommercialVehicles(msID int) (int, error) {
+func (q *Queries) CountCommercialVehicles(msID, countryID int) (int, error) {
 	query := `
 		SELECT
 			COUNT(*)
@@ -150,10 +150,12 @@ func (q *Queries) CountCommercialVehicles(msID int) (int, error) {
 		WHERE
 			COMMERCIAL_VEHICLES.CV_MS_ID = ?
 			AND FIND_IN_SET('CV', MODELS_SERIES.MS_TYPE) > 0
+			AND EXISTS (SELECT 1 FROM CV_COUNTRY_SPECIFICS
+				WHERE CCS_CV_ID = COMMERCIAL_VEHICLES.CV_ID AND CCS_COU_ID IN (?, 0))
 	`
 
 	var count int
-	err := q.db.QueryRow(query, msID, msID).Scan(&count)
+	err := q.db.QueryRow(query, msID, msID, countryID).Scan(&count)
 	return count, err
 }
 
